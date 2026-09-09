@@ -17,14 +17,18 @@ public sealed class TransferWorkspace : IDisposable
     {
         roots = RootSafetyLease.Acquire(source, destination); guard = new(Source);
         try {
-            // Storage is local and separated from both selected trees before any DB/log write.
-            using var storagePair = RootSafetyLease.Acquire(Source, storageParent);
-            PathSafetyService.ValidatePair(Destination, storagePair.Destination);
-            pins.Add(DirectoryLease.Acquire(storagePair.Destination));
-            StorageRoot = Path.Combine(storagePair.Destination, "SafeFileSync");
+            // Check the directory we actually write, not its parent (which may legitimately contain source siblings).
+            var storageLease = DirectoryLease.Acquire(storageParent); pins.Add(storageLease);
+            using var src = DirectoryLease.Acquire(Source);
+            using var dst = DirectoryLease.Acquire(Destination);
+            if (storageLease.Identities.Contains(src.Identities[^1]) || storageLease.Identities.Contains(dst.Identities[^1]))
+                throw new IOException("작업 저장소를 원본/목적지 내부에 만들 수 없습니다.");
+            StorageRoot = Path.Combine(storageLease.FinalPath, "SafeFileSync");
             guard.Demand(StorageRoot, FileOperation.Create);
+            PathSafetyService.ValidatePair(Source,StorageRoot); PathSafetyService.ValidatePair(Destination,StorageRoot);
             if (Directory.Exists(StorageRoot)) {
-                using var storageRootPair = RootSafetyLease.Acquire(Source, StorageRoot);
+                using var storageSourcePair = RootSafetyLease.Acquire(Source,StorageRoot);
+                using var storageDestPair = RootSafetyLease.Acquire(Destination,StorageRoot);
             }
             Directory.CreateDirectory(NativeFiles.Extended(StorageRoot)); pins.Add(DirectoryLease.Acquire(StorageRoot));
         } catch { Dispose(); throw; }

@@ -41,7 +41,10 @@ public partial class MainWindow : Window
         var conflicts = ReplaceExisting.IsChecked == true ? ConflictPolicy.ReplaceAfterVerification : ConflictPolicy.Preserve;
         cancellation = new(); SetBusy(true); elapsed.Restart(); report = null; ReportButton.IsEnabled = false;
         Summary.Text = "검사 중 · 완료 여부 미확정"; Differences.ItemsSource = null; SourceTree.Items.Clear(); DestinationTree.Items.Clear();
+        var operation = cancellation; long lastRender = -100;
         var progress = new Progress<TransferProgress>(p => {
+            if (!ReferenceEquals(cancellation,operation) || operation.IsCancellationRequested || elapsed.ElapsedMilliseconds-lastRender < 80) return;
+            lastRender = elapsed.ElapsedMilliseconds;
             Status.Text = $"{p.Phase} · {p.RelativePath} · {p.Detail}";
             Progress.IsIndeterminate = p.TotalFiles == 0;
             Progress.Value = p.TotalFiles == 0 ? 0 : 100d * p.CompletedFiles / p.TotalFiles;

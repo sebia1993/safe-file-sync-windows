@@ -100,7 +100,7 @@ public sealed class TransferTests : IDisposable
     [Fact] public async Task SourceContainingStorageIsRejectedBeforeCreatingDatabase()
     {
         string inside = Path.Combine(Source,"storage"); Directory.CreateDirectory(inside);
-        Assert.Throws<ArgumentException>(() => new TransferWorkspace(Source,Destination,inside));
+        Assert.Throws<IOException>(() => new TransferWorkspace(Source,Destination,inside));
         Assert.Empty(Directory.EnumerateFileSystemEntries(inside)); await Task.CompletedTask;
     }
     [Fact] public void InterruptedSnapshotCannotBeCompared()
@@ -183,6 +183,12 @@ public sealed class TransferTests : IDisposable
         var retried = await coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,resumeId:initial.Info.Id,failedOnly:true);
         Assert.Equal("source",File.ReadAllText(Path.Combine(Destination,"failed.txt"))); Assert.False(File.Exists(Path.Combine(Destination,"new.txt")));
         Assert.Equal("NeedsAttention",retried.Info.Status); Assert.Equal(50,retried.TransferPercent); Assert.Equal(50,retried.HashPercent);
+    }
+    [Fact] public async Task StorageParentMayContainSourceWhenActualStorageIsSeparate()
+    {
+        Seed(); var result = await new TransferCoordinator(root).RunAsync(Source,Destination,VerificationMode.Quick,ConflictPolicy.Preserve,true);
+        AssertCompleted(result); Assert.True(File.Exists(result.Info.DatabasePath));
+        Assert.DoesNotContain(Directory.GetFiles(Source,"*",SearchOption.AllDirectories),p => p.EndsWith(".sqlite"));
     }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
