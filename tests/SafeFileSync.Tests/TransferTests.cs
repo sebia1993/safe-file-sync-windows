@@ -247,16 +247,17 @@ public sealed class TransferTests : IDisposable
     }
     [Fact] public async Task SourceWithExplicitWriteAndDeleteDenyAclStillCopiesReadOnly()
     {
-        Seed(); var directory=new DirectoryInfo(Source); var original=directory.GetAccessControl(); var locked=directory.GetAccessControl();
+        Seed(); var directory=new DirectoryInfo(Source); var locked=directory.GetAccessControl();
         var identity=WindowsIdentity.GetCurrent().User!;
-        locked.AddAccessRule(new FileSystemAccessRule(identity,FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Deny));
+        var denyRule = new FileSystemAccessRule(identity,FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Deny);
+        locked.AddAccessRule(denyRule);
         directory.SetAccessControl(locked);
         try {
             var before=Snapshot(); var acl=directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access);
             var result=await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
             AssertCompleted(result); AssertUnchanged(before); Assert.Equal(acl,directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access));
-        } finally { directory.SetAccessControl(original); }
+        } finally { locked.RemoveAccessRuleSpecific(denyRule); directory.SetAccessControl(locked); }
     }
     [Fact] public async Task PathsLongerThanLegacyMaxPathAreCopiedAndVerified()
     {

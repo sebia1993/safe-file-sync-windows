@@ -29,7 +29,7 @@ public static class RobocopyArgumentBuilder
             if (!string.Equals(Path.GetDirectoryName(logPath),stagingDirectory,StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("로그는 검증된 임시 폴더 바로 아래에 있어야 합니다.");
             new SourceProtectionGuard(parent).Demand(logPath,FileOperation.Create);
-            args.Add("/UNILOG:" + logPath);
+            args.Add("/UNILOG:" + NativeFiles.Extended(logPath));
         }
         if (args.Sum(a => a.Length + 3) > 30000) throw new ArgumentException("Robocopy 명령줄 길이 제한을 초과합니다.");
         return args.AsReadOnly();
