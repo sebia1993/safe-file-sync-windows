@@ -20,9 +20,13 @@ jobs:
       - run: dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true -o artifacts/app
       - name: WPF executable launch smoke
         run: ./scripts/Smoke-App.ps1 -Executable artifacts/app/SafeFileSync.App.exe
-      - name: WPF compare and copy UI acceptance
+      - name: Isolate single executable without sidecar libraries
+        run: |
+          New-Item -ItemType Directory -Path artifacts/standalone | Out-Null
+          Copy-Item artifacts/app/SafeFileSync.App.exe artifacts/standalone/
+      - name: Standalone EXE compare and copy UI acceptance
         shell: powershell
-        run: ./scripts/Test-UI.ps1 -Executable artifacts/app/SafeFileSync.App.exe
+        run: ./scripts/Test-UI.ps1 -Executable artifacts/standalone/SafeFileSync.App.exe
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
