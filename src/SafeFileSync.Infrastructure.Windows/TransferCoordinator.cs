@@ -35,7 +35,7 @@ public sealed class TransferCoordinator
         void Scan(string name, string root, bool destinationScan = false) {
             progress?.Report(new("스캔: " + name, root));
             // Only the exact staging directory owned by this job is excluded from destination comparison.
-            var entries = scanner.Scan(root, mode, token).Where(e => !destinationScan || (e.RelativePath != stageRelative && !e.RelativePath.StartsWith(stageRelative + "\\", StringComparison.OrdinalIgnoreCase)));
+            var entries = scanner.Scan(root, mode, token, destinationScan ? stageRelative : null);
             db.SaveSnapshot(name, entries, token, (n,b) => progress?.Report(new("스캔: " + name, root, n, CompletedBytes: b)));
         }
         try {

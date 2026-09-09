@@ -4,7 +4,7 @@ using SafeFileSync.Core;
 namespace SafeFileSync.Infrastructure.Windows;
 public sealed class FolderScanner
 {
-    public IEnumerable<ScanEntry> Scan(string root, VerificationMode mode, CancellationToken token = default)
+    public IEnumerable<ScanEntry> Scan(string root, VerificationMode mode, CancellationToken token = default, string? internalExcludedDirectory = null)
     {
         root = PathSafetyService.Normalize(root);
         var pending = new Stack<string>(); pending.Push(root);
@@ -33,6 +33,7 @@ public sealed class FolderScanner
                         catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message); }
                         if (error is not null) { yield return error; break; }
                         if (path is null) break;
+                        if (internalExcludedDirectory is not null && Relative(root,path).Equals(internalExcludedDirectory,StringComparison.OrdinalIgnoreCase)) continue;
                         var entry = ReadEntry(root, path, mode, token);
                         yield return entry;
                         if (entry.Kind == EntryKind.Directory) pending.Push(path);
