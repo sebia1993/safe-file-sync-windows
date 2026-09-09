@@ -52,11 +52,11 @@ public sealed class TransferTests : IDisposable
     {
         Seed(); var before = Snapshot(); File.WriteAllText(Path.Combine(Destination,"extra.txt"),"keep");
         var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
-        Assert.Equal("Completed",result.Info.Status); Assert.True(result.Summary.AllSourceEntriesMatch); Assert.Equal(1,result.Summary.Extra);
+        AssertCompleted(result); Assert.True(result.Summary.AllSourceEntriesMatch); Assert.Equal(1,result.Summary.Extra);
         Assert.Equal("keep",File.ReadAllText(Path.Combine(Destination,"extra.txt"))); AssertUnchanged(before);
         Assert.True(File.Exists(result.ReportPath)); Assert.True(Directory.Exists(Path.Combine(Destination,"한글 폴더","empty")));
         var again = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,resumeId:result.Info.Id);
-        Assert.Equal("Completed",again.Info.Status); AssertUnchanged(before);
+        AssertCompleted(again); AssertUnchanged(before);
     }
     [Fact] public async Task PreservePolicyReportsConflictWithoutOverwriting()
     {
@@ -68,7 +68,7 @@ public sealed class TransferTests : IDisposable
     {
         File.WriteAllText(Path.Combine(Source,"report.txt"),"original"); File.WriteAllText(Path.Combine(Destination,"report.txt"),"destination"); var before = Snapshot();
         var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.ReplaceAfterVerification,true);
-        Assert.Equal("Completed",result.Info.Status); Assert.Equal("original",File.ReadAllText(Path.Combine(Destination,"report.txt"))); AssertUnchanged(before);
+        AssertCompleted(result); Assert.Equal("original",File.ReadAllText(Path.Combine(Destination,"report.txt"))); AssertUnchanged(before);
     }
     [Fact] public async Task DestinationHardLinkToSourceIsBlocked()
     {
@@ -87,7 +87,7 @@ public sealed class TransferTests : IDisposable
         Seed(); using var cts = new CancellationTokenSource(); cts.Cancel(); var coordinator = new TransferCoordinator(Storage);
         await Assert.ThrowsAsync<OperationCanceledException>(() => coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,token:cts.Token));
         var job = Assert.Single(coordinator.History()); Assert.Equal("Cancelled",job.Status);
-        var result = await coordinator.RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id); Assert.Equal("Completed",result.Info.Status);
+        var result = await coordinator.RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id); AssertCompleted(result);
     }
     [Fact] public async Task SourceContainingStorageIsRejectedBeforeCreatingDatabase()
     {
@@ -136,18 +136,23 @@ public sealed class TransferTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Destination,"cancel.dat"))); AssertUnchanged(before);
         var job = Assert.Single(new TransferCoordinator(Storage).History());
         var resumed = await new TransferCoordinator(Storage).RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id);
-        Assert.Equal("Completed",resumed.Info.Status); AssertUnchanged(before);
+        AssertCompleted(resumed); AssertUnchanged(before);
     }
     [Fact] public async Task SameSizeTimeCorruptionIsRepairedByHashMode()
     {
         string src = Path.Combine(Source,"same.txt"), dst = Path.Combine(Destination,"same.txt");
         File.WriteAllText(src,"AAAA"); File.WriteAllText(dst,"BBBB"); File.SetLastWriteTimeUtc(dst,File.GetLastWriteTimeUtc(src));
         var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.ReplaceAfterVerification,true);
-        Assert.Equal("Completed",result.Info.Status); Assert.Equal("AAAA",File.ReadAllText(dst));
+        AssertCompleted(result); Assert.Equal("AAAA",File.ReadAllText(dst));
     }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);
+    }
+    private static void AssertCompleted(JobView view) {
+        using var db = new JobStore(view.Info.DatabasePath,true);
+        string detail = view.SourceCheck + " | " + System.Text.Json.JsonSerializer.Serialize(view.Summary) + " | " + string.Join("; ",db.Outcomes().Select(o => o.Path + ": " + o.Status + ": " + o.Detail));
+        Assert.True(view.Info.Status == "Completed", detail);
     }
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateHardLinkW(string name,string existing,IntPtr security);
 }

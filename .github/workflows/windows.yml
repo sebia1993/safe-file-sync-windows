@@ -13,6 +13,8 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet test SafeFileSync.slnx -c Release --logger "trx;LogFileName=safety.trx"
       - run: dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true -o artifacts/app
+      - name: WPF executable launch smoke
+        run: ./scripts/Smoke-App.ps1 -Executable artifacts/app/SafeFileSync.App.exe
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: windows-safety-prototype
