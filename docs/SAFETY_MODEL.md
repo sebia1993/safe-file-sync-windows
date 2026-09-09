@@ -15,6 +15,8 @@ Only fixed file arguments are passed using ProcessStartInfo.ArgumentList to the 
 Staging is retained for interruption/retry. Only this job's exact staging subtree is omitted from its destination comparison. Other folders are never silently omitted. Existing source names colliding with the job staging namespace abort copying.
 
 ## What verification means
-Quick mode compares path/type/size/last-write time and is not content proof. SHA-256 compares basic file data streams, not ACL/ADS or all NTFS metadata. Empty directories are included. Error/excluded/missing-hash entries cannot count as verified. Cancelled snapshots cannot be read as completed snapshots. Source-before/after differences and per-file transfer failures force NeedsAttention; Robocopy exit codes never determine verification success on their own.
+Quick mode compares path/type/size/last-write time and is not content proof. SHA-256 compares basic file data streams, not ACL/ADS or all NTFS metadata. Empty directories are included. Error/excluded/missing-hash entries cannot count as verified. Cancelled snapshots cannot be read as completed snapshots. The first completed source snapshot is retained across resume; differences against the final source snapshot and per-file transfer failures force NeedsAttention; Robocopy exit codes never determine verification success on their own.
 
 Network filesystem calls may take time to return after cancellation. The app waits for the Robocopy child to terminate before releasing resources. No completed state is stored on cancellation.
+
+Robocopy groups contain at most 32 files from one directory and use fixed /MT:8. Unicode logs are newly created in the separately pinned application storage directory with a no-delete-sharing handle. This avoids Robocopy log-path expansion failures for deeply nested payloads. Source reparse entries are excluded and remain unverified while regular files can proceed.

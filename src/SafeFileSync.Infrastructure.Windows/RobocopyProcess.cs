@@ -13,10 +13,12 @@ public sealed class RobocopyProcess
     public Task<CopyResult> CopyFileAsync(string sourceFile, string stagingDirectory,
         Action<double>? progress, CancellationToken token) => CopyFilesAsync([sourceFile], stagingDirectory, progress, token);
     public async Task<CopyResult> CopyFilesAsync(IReadOnlyList<string> sourceFiles, string stagingDirectory,
-        Action<double>? progress, CancellationToken token)
+        Action<double>? progress, CancellationToken token, string? logDirectory = null)
     {
-        string logPath=Path.Combine(stagingDirectory,".robocopy-" + Guid.NewGuid().ToString("N") + ".log");
-        var arguments = RobocopyArgumentBuilder.BuildFiles(sourceFiles,stagingDirectory,logPath);
+        logDirectory = PathSafetyService.Normalize(logDirectory ?? stagingDirectory);
+        using var logLease = RootSafetyLease.Acquire(Path.GetDirectoryName(PathSafetyService.Normalize(sourceFiles[0]))!, logDirectory);
+        string logPath=Path.Combine(logDirectory,".robocopy-" + Guid.NewGuid().ToString("N") + ".log");
+        var arguments = RobocopyArgumentBuilder.BuildFiles(sourceFiles,stagingDirectory,logPath,logDirectory);
         token.ThrowIfCancellationRequested();
         using var log = NativeFiles.CreateOwnedLog(PathSafetyService.Normalize(logPath));
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "robocopy.exe")) {

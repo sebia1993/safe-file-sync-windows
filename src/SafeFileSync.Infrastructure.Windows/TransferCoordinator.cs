@@ -109,7 +109,7 @@ public sealed class TransferCoordinator
                     CopyResult result = new(0, "검증된 임시 복사본 재사용");
                     if (required.Length > 0) {
                         result = await engine.CopyFilesAsync(required.Select(p => TransferWorkspace.Combine(workspace.Source,p.Entry.RelativePath)).ToArray(), Path.GetDirectoryName(required[0].Stage)!,
-                            percent => progress?.Report(new("복사", batchParent + $" ({required.Length}개 묶음)", done, totals.Files, bytes, totals.Bytes, $"현재 Robocopy 파일 {percent:F1}%")), token);
+                            percent => progress?.Report(new("복사", batchParent + $" ({required.Length}개 묶음)", done, totals.Files, bytes, totals.Bytes, $"현재 Robocopy 파일 {percent:F1}%")), token, workspace.StorageRoot);
                     }
                     foreach (var item in prepared) {
                         try {

@@ -9,7 +9,7 @@ public static class RobocopyArgumentBuilder
         PathSafetyService.ValidatePair(source, destination);
         return Array.AsReadOnly(new[] { PathSafetyService.Normalize(source), PathSafetyService.Normalize(destination) }.Concat(FolderOptions).ToArray());
     }
-    public static IReadOnlyList<string> BuildFiles(IReadOnlyList<string> sourceFiles, string stagingDirectory, string? logPath = null)
+    public static IReadOnlyList<string> BuildFiles(IReadOnlyList<string> sourceFiles, string stagingDirectory, string? logPath = null, string? logDirectory = null)
     {
         if (sourceFiles.Count is < 1 or > 32) throw new ArgumentException("한 번에 1~32개의 파일이 필요합니다.");
         string parent = Path.GetDirectoryName(PathSafetyService.Normalize(sourceFiles[0]))!;
@@ -26,8 +26,8 @@ public static class RobocopyArgumentBuilder
         ValidateOptions(FileOptions); args.AddRange(FileOptions);
         if (logPath is not null) {
             logPath = PathSafetyService.Normalize(logPath);
-            if (!string.Equals(Path.GetDirectoryName(logPath),stagingDirectory,StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("로그는 검증된 임시 폴더 바로 아래에 있어야 합니다.");
+            if (!string.Equals(Path.GetDirectoryName(logPath),PathSafetyService.Normalize(logDirectory ?? stagingDirectory),StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("로그는 검증된 로그 폴더 바로 아래에 있어야 합니다.");
             new SourceProtectionGuard(parent).Demand(logPath,FileOperation.Create);
             args.Add("/UNILOG:" + NativeFiles.Extended(logPath));
         }
