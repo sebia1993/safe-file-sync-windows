@@ -153,6 +153,26 @@ public sealed class TransferTests : IDisposable
         var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.ReplaceAfterVerification,true);
         AssertCompleted(result); Assert.Equal("AAAA",File.ReadAllText(dst));
     }
+    [Fact] public async Task ThousandSmallFilesCrossMultipleBatches()
+    {
+        for (int i=0;i<1025;i++) File.WriteAllText(Path.Combine(Source,$"file-{i:D4}.txt"),$"original {i}");
+        var before = Snapshot(); var timer = Stopwatch.StartNew();
+        var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+        AssertCompleted(result); Assert.Equal(1025,result.Summary.Matched); Assert.Equal(1000,result.Rows.Count); AssertUnchanged(before);
+        using var db = new JobStore(result.Info.DatabasePath,true); Assert.Equal(1025,db.Outcomes().Count());
+        Assert.Contains("file-1024.txt",File.ReadAllText(result.ReportPath!));
+        Console.WriteLine($"1,025 small files copied and SHA-256 verified in {timer.Elapsed.TotalSeconds:F2}s.");
+    }
+    [Fact] public async Task LargeFileIsStreamedAndVerified()
+    {
+        string path = Path.Combine(Source,"large.bin");
+        using (var file = File.Create(path)) { file.SetLength(512L*1024*1024+17); file.Position=file.Length-4; file.Write([1,2,3,4]); }
+        string Digest(string p) { using var file=File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(file)); }
+        var hash = Digest(path); var time = File.GetLastWriteTimeUtc(path); var timer=Stopwatch.StartNew();
+        var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+        AssertCompleted(result); Assert.Equal(hash,Digest(Path.Combine(Destination,"large.bin"))); Assert.Equal(hash,Digest(path)); Assert.Equal(time,File.GetLastWriteTimeUtc(path));
+        Console.WriteLine($"512 MiB + 17 byte file copied and verified in {timer.Elapsed.TotalSeconds:F2}s.");
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);

@@ -56,7 +56,7 @@ internal static class NativeFiles
         // FileShare.Read forbids concurrent content writers and deletion while hashing/copying.
         var handle = CreateFileW(Extended(path), 0x80000000, 1, IntPtr.Zero, 3, 0x08200000, IntPtr.Zero);
         if (handle.IsInvalid) { var code = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); }
-        var stream = new FileStream(handle, FileAccess.Read, 1024 * 1024);
+        var stream = new FileStream(handle, FileAccess.Read, 64 * 1024);
         try {
             if ((Info(stream.SafeFileHandle).Attributes & 0x400) != 0) throw new IOException("파일 링크 제외: " + path);
             return stream;

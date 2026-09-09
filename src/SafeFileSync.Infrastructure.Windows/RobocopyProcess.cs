@@ -10,15 +10,25 @@ public sealed record CopyResult(int ExitCode, string Output)
 }
 public sealed class RobocopyProcess
 {
-    public async Task<CopyResult> CopyFileAsync(string sourceFile, string stagingDirectory,
+    public Task<CopyResult> CopyFileAsync(string sourceFile, string stagingDirectory,
+        Action<double>? progress, CancellationToken token) => CopyFilesAsync([sourceFile], stagingDirectory, progress, token);
+    public async Task<CopyResult> CopyFilesAsync(IReadOnlyList<string> sourceFiles, string stagingDirectory,
         Action<double>? progress, CancellationToken token)
     {
-        string parent = Path.GetDirectoryName(sourceFile)!;
+        if (sourceFiles.Count is < 1 or > 32) throw new ArgumentException("한 번에 1~32개의 파일이 필요합니다.");
+        string parent = Path.GetDirectoryName(sourceFiles[0])!;
         PathSafetyService.ValidatePair(parent, stagingDirectory);
+        foreach (var file in sourceFiles) {
+            PathSafetyService.Normalize(file);
+            if (!string.Equals(Path.GetDirectoryName(file), parent, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("묶음 내 파일은 같은 원본 폴더에 있어야 합니다.");
+        }
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "robocopy.exe")) {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
         };
-        foreach (var arg in new[] { parent, stagingDirectory, Path.GetFileName(sourceFile), "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS" }) start.ArgumentList.Add(arg);
+        start.ArgumentList.Add(parent); start.ArgumentList.Add(stagingDirectory);
+        foreach (var file in sourceFiles) start.ArgumentList.Add(Path.GetFileName(file));
+        foreach (var arg in new[] { "/MT:8", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS" }) start.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = start };
         token.ThrowIfCancellationRequested();
         if (!process.Start()) throw new IOException("Robocopy를 시작하지 못했습니다.");

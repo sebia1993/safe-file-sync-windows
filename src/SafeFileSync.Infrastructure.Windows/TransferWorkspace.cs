@@ -8,6 +8,7 @@ public sealed class TransferWorkspace : IDisposable
     private readonly RootSafetyLease roots;
     private readonly List<DirectoryLease> pins = [];
     private readonly HashSet<string> sourceIdentities = [];
+    private readonly HashSet<string> pinnedDestinations = new(StringComparer.OrdinalIgnoreCase);
     private readonly SourceProtectionGuard guard;
     public string Source => roots.Source;
     public string Destination => roots.Destination;
@@ -52,9 +53,10 @@ public sealed class TransferWorkspace : IDisposable
     }
     private void CheckDestinationDirectory(string path)
     {
+        if (pinnedDestinations.Contains(path)) return;
         var lease = DirectoryLease.Acquire(path);
         if (lease.Identities.Any(sourceIdentities.Contains)) { lease.Dispose(); throw new IOException("목적지 별칭이 원본 영역을 가리킵니다."); }
-        pins.Add(lease);
+        pins.Add(lease); pinnedDestinations.Add(path);
     }
     public string EnsureDestinationDirectory(string relative)
     {

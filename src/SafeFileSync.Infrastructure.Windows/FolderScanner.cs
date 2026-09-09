@@ -65,11 +65,12 @@ public sealed class FolderScanner
     internal static string Hash(Stream stream, CancellationToken token)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buffer = new byte[1024 * 1024];
-        int count;
-        while ((count = stream.Read(buffer)) != 0) { token.ThrowIfCancellationRequested(); hash.AppendData(buffer, 0, count); }
-        token.ThrowIfCancellationRequested();
-        return Convert.ToHexString(hash.GetHashAndReset());
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(1024 * 1024);
+        try {
+            int count;
+            while ((count = stream.Read(buffer)) != 0) { token.ThrowIfCancellationRequested(); hash.AppendData(buffer, 0, count); }
+            token.ThrowIfCancellationRequested(); return Convert.ToHexString(hash.GetHashAndReset());
+        } finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
     }
     internal static bool IsScanError(Exception ex) => ex is IOException or UnauthorizedAccessException or Win32Exception or ArgumentException;
     private static string Relative(string root, string path) => path.Equals(root, StringComparison.OrdinalIgnoreCase) ? "." : Path.GetRelativePath(root, path);

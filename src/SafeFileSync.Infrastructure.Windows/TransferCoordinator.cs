@@ -53,11 +53,73 @@ public sealed class TransferCoordinator
             long done = 0, bytes = 0, failures = 0;
             var engine = new RobocopyProcess();
             db.SetStatus("Copying");
+            var batch = new List<ScanEntry>();
+            string batchParent = "";
+            async Task Flush()
+            {
+                if (batch.Count == 0) return;
+                var prepared = new List<(ScanEntry Entry, FileStream Source, string Hash, string Stage, bool NeedsCopy)>();
+                try {
+                    foreach (var entry in batch) {
+                        FileStream? stream = null;
+                        try {
+                            token.ThrowIfCancellationRequested();
+                            string sourceFile = TransferWorkspace.Combine(workspace.Source, entry.RelativePath);
+                            stream = NativeFiles.OpenRead(sourceFile);
+                            var before = NativeFiles.Info(stream.SafeFileHandle);
+                            if (before.Length != entry.Length || before.WriteTicks != entry.LastWriteUtcTicks || before.Identity != entry.Identity)
+                                throw new IOException("복사 전 원본 변경 감지");
+                            string hash = FolderScanner.Hash(stream, token);
+                            if (entry.Hash is not null && entry.Hash != hash) throw new IOException("복사 전 원본 내용 변경 감지");
+                            workspace.EnsureDestinationDirectory(batchParent);
+                            string stageDirectory = workspace.EnsureDestinationDirectory(Path.Combine(stageRelative, batchParent));
+                            string stageFile = Path.Combine(stageDirectory, Path.GetFileName(sourceFile));
+                            bool needsCopy = true;
+                            if (File.Exists(stageFile)) {
+                                using var staged = NativeFiles.OpenRead(stageFile);
+                                var stageInfo = NativeFiles.Info(staged.SafeFileHandle);
+                                if (stageInfo.Links != 1) throw new IOException("임시 파일 하드링크 차단");
+                                if (stageInfo.Length == entry.Length && FolderScanner.Hash(staged, token) == hash) needsCopy = false;
+                            }
+                            prepared.Add((entry, stream, hash, stageFile, needsCopy)); stream = null;
+                            db.Outcome(entry.RelativePath, "Copying");
+                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
+                        finally { stream?.Dispose(); }
+                    }
+                    var required = prepared.Where(p => p.NeedsCopy).ToArray();
+                    CopyResult result = new(0, "검증된 임시 복사본 재사용");
+                    if (required.Length > 0) {
+                        result = await engine.CopyFilesAsync(required.Select(p => TransferWorkspace.Combine(workspace.Source,p.Entry.RelativePath)).ToArray(), Path.GetDirectoryName(required[0].Stage)!,
+                            percent => progress?.Report(new("복사", batchParent + $" ({required.Length}개 묶음)", done, totals.Files, bytes, totals.Bytes, $"현재 Robocopy 파일 {percent:F1}%")), token);
+                    }
+                    foreach (var item in prepared) {
+                        try {
+                            token.ThrowIfCancellationRequested();
+                            if (item.NeedsCopy && result.Failed) throw new IOException($"Robocopy 종료 코드 {result.ExitCode}: {result.Output}");
+                            progress?.Report(new("임시 복사본 SHA-256 검증", item.Entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
+                            using (var staged = NativeFiles.OpenRead(item.Stage)) {
+                                var info = NativeFiles.Info(staged.SafeFileHandle);
+                                if (info.Links != 1 || info.Length != item.Entry.Length || FolderScanner.Hash(staged, token) != item.Hash)
+                                    throw new IOException("임시 복사본 검증 실패: 최종 파일에 반영하지 않았습니다.");
+                            }
+                            var after = NativeFiles.Info(item.Source.SafeFileHandle);
+                            if (after.Length != item.Entry.Length || after.WriteTicks != item.Entry.LastWriteUtcTicks)
+                                throw new IOException("복사 중 원본 변경 감지");
+                            token.ThrowIfCancellationRequested();
+                            workspace.Commit(item.Stage, item.Entry.RelativePath, conflicts);
+                            db.Outcome(item.Entry.RelativePath, "CopiedAndVerified", $"Robocopy {result.ExitCode}; SHA-256 {item.Hash}");
+                            done++; bytes += item.Entry.Length;
+                            progress?.Report(new("복사", item.Entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
+                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(item.Entry.RelativePath, "Failed", ex.Message); }
+                    }
+                } finally { foreach (var item in prepared) item.Source.Dispose(); batch.Clear(); }
+            }
             foreach (var difference in db.Compare("source-before", "destination-before", mode)) {
                 token.ThrowIfCancellationRequested();
                 var entry = difference.Source;
                 if (entry is null) continue;
                 if (entry.Kind == EntryKind.Directory) {
+                    await Flush();
                     try { workspace.EnsureDestinationDirectory(entry.RelativePath); db.Outcome(entry.RelativePath, "Directory"); }
                     catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
                     continue;
@@ -65,43 +127,14 @@ public sealed class TransferCoordinator
                 if (difference.Kind is DifferenceKind.QuickMatch or DifferenceKind.Verified) {
                     done++; bytes += entry.Length; db.Outcome(entry.RelativePath, "Skipped"); continue;
                 }
-                try {
-                    if (difference.Destination is not null && conflicts == ConflictPolicy.Preserve)
-                        throw new IOException("목적지 기존 항목 보존: 교체 정책을 선택해야 복사할 수 있습니다.");
-                    string sourceFile = TransferWorkspace.Combine(workspace.Source, entry.RelativePath);
-                    using var sourceStream = NativeFiles.OpenRead(sourceFile);
-                    var before = NativeFiles.Info(sourceStream.SafeFileHandle);
-                    if (before.Length != entry.Length || before.WriteTicks != entry.LastWriteUtcTicks || before.Identity != entry.Identity)
-                        throw new IOException("복사 전 원본 변경 감지");
-                    var sourceHash = FolderScanner.Hash(sourceStream, token);
-                    if (entry.Hash is not null && entry.Hash != sourceHash) throw new IOException("복사 전 원본 내용 변경 감지");
-                    string parent = Path.GetDirectoryName(entry.RelativePath) ?? "";
-                    workspace.EnsureDestinationDirectory(parent);
-                    string stageDirectory = workspace.EnsureDestinationDirectory(Path.Combine(stageRelative, parent));
-                    string stageFile = Path.Combine(stageDirectory, Path.GetFileName(sourceFile));
-                    if (File.Exists(stageFile)) {
-                        using var staged = NativeFiles.OpenRead(stageFile);
-                        if (NativeFiles.Info(staged.SafeFileHandle).Links != 1) throw new IOException("임시 파일 하드링크 차단");
-                    }
-                    db.Outcome(entry.RelativePath, "Copying");
-                    var result = await engine.CopyFileAsync(sourceFile, stageDirectory,
-                        percent => progress?.Report(new("복사", entry.RelativePath, done, totals.Files, bytes, totals.Bytes, $"현재 파일 {percent:F1}%")), token);
-                    if (result.Failed) throw new IOException($"Robocopy 종료 코드 {result.ExitCode}: {result.Output}");
-                    progress?.Report(new("임시 복사본 SHA-256 검증", entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
-                    using (var staged = NativeFiles.OpenRead(stageFile)) {
-                        var stageInfo = NativeFiles.Info(staged.SafeFileHandle);
-                        if (stageInfo.Links != 1 || stageInfo.Length != entry.Length || FolderScanner.Hash(staged, token) != sourceHash)
-                            throw new IOException("임시 복사본 검증 실패: 최종 파일에 반영하지 않았습니다.");
-                    }
-                    var after = NativeFiles.Info(sourceStream.SafeFileHandle);
-                    if (before.Length != after.Length || before.WriteTicks != after.WriteTicks) throw new IOException("복사 중 원본 변경 감지");
-                    token.ThrowIfCancellationRequested();
-                    workspace.Commit(stageFile, entry.RelativePath, conflicts);
-                    db.Outcome(entry.RelativePath, "CopiedAndVerified", $"Robocopy {result.ExitCode}; SHA-256 {sourceHash}");
-                    done++; bytes += entry.Length;
-                    progress?.Report(new("복사", entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
-                } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
+                if (difference.Destination is not null && conflicts == ConflictPolicy.Preserve) {
+                    failures++; db.Outcome(entry.RelativePath, "Failed", "목적지 기존 항목 보존: 교체 정책이 선택되지 않았습니다."); continue;
+                }
+                string parent = Path.GetDirectoryName(entry.RelativePath) ?? "";
+                if (batch.Count == 32 || batchParent != parent || batch.Sum(e => e.RelativePath.Length) + entry.RelativePath.Length > 20000) await Flush();
+                batchParent = parent; batch.Add(entry);
             }
+            await Flush();
             db.SetStatus("Verifying");
             Scan("source-after", workspace.Source); Scan("destination-after", workspace.Destination, true);
             var unchanged = db.Summary("source-before", "source-after", mode);
