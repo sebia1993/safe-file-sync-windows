@@ -2,14 +2,15 @@ using System.Text.Json;
 using SafeFileSync.Core;
 namespace SafeFileSync.Infrastructure.Windows;
 
-public sealed record JobView(JobInfo Info, ComparisonSummary Summary, IReadOnlyList<Difference> Rows, string SourceCheck, string? ReportPath);
+public sealed record JobView(JobInfo Info, ComparisonSummary Summary, IReadOnlyList<Difference> Rows, string SourceCheck, string? ReportPath, double? TransferPercent, double? HashPercent);
 public sealed class TransferCoordinator
 {
     private readonly string storageParent;
     public TransferCoordinator(string? storageParent = null) => this.storageParent = storageParent ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     public async Task<JobView> RunAsync(string source, string destination, VerificationMode mode, ConflictPolicy conflicts,
-        bool copy, IProgress<TransferProgress>? progress = null, CancellationToken token = default, string? resumeId = null)
+        bool copy, IProgress<TransferProgress>? progress = null, CancellationToken token = default, string? resumeId = null, bool failedOnly = false)
     {
+        if (failedOnly && resumeId is null) throw new ArgumentException("실패 항목 재시도는 기존 작업에서만 가능합니다.");
         if (!Enum.IsDefined(mode) || !Enum.IsDefined(conflicts)) throw new ArgumentException("지원하지 않는 작업 옵션");
         var id = resumeId is null ? Guid.NewGuid().ToString("N") : Guid.ParseExact(resumeId, "N").ToString("N");
         using var workspace = new TransferWorkspace(source, destination, storageParent);
@@ -26,6 +27,7 @@ public sealed class TransferCoordinator
             if (previous.Source != workspace.Source || previous.Destination != workspace.Destination || previous.Mode != mode || previous.Conflicts != conflicts)
                 throw new IOException("작업 재개 시 원본·목적지·검증·교체 정책을 변경할 수 없습니다.");
         }
+        var retryPaths = failedOnly ? db.Outcomes().Where(o => o.Status is "Failed" or "Copying").Select(o => o.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
         db.Initialize(new(id, workspace.Source, workspace.Destination, mode, conflicts, "Scanning", databasePath, DateTime.UtcNow.ToString("O")));
         var scanner = new FolderScanner();
         string stageRelative = ".safefilesync-" + id;
@@ -118,6 +120,7 @@ public sealed class TransferCoordinator
                 token.ThrowIfCancellationRequested();
                 var entry = difference.Source;
                 if (entry is null) continue;
+                if (retryPaths is not null && !retryPaths.Contains(entry.RelativePath) && difference.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified)) continue;
                 if (entry.Kind == EntryKind.Directory) {
                     await Flush();
                     try { workspace.EnsureDestinationDirectory(entry.RelativePath); db.Outcome(entry.RelativePath, "Directory"); }
@@ -135,6 +138,7 @@ public sealed class TransferCoordinator
                 batchParent = parent; batch.Add(entry);
             }
             await Flush();
+            db.Set("transferPercent", (totals.Files == 0 ? 100d : 100d * done / totals.Files).ToString(System.Globalization.CultureInfo.InvariantCulture));
             db.SetStatus("Verifying");
             Scan("source-after", workspace.Source); Scan("destination-after", workspace.Destination, true);
             var unchanged = db.Summary("source-before", "source-after", mode);
@@ -151,8 +155,18 @@ public sealed class TransferCoordinator
         } catch (OperationCanceledException) { db.SetStatus("Cancelled"); throw; }
         catch { db.SetStatus("Failed"); throw; }
     }
-    private static JobView View(JobStore db, string source, string destination, string sourceCheck, string? report) =>
-        new(db.Info, db.Summary(source, destination, db.Info.Mode), db.Compare(source, destination, db.Info.Mode).Take(1000).ToArray(), sourceCheck, report);
+    private static JobView View(JobStore db, string source, string destination, string sourceCheck, string? report)
+    {
+        long files = 0, hashes = 0;
+        foreach (var row in db.Compare(source,destination,db.Info.Mode)) {
+            if (row.Source?.Kind == EntryKind.File) { files++; if (row.Kind == DifferenceKind.Verified) hashes++; }
+        }
+        double? transfer = double.TryParse(db.Get("transferPercent"),System.Globalization.CultureInfo.InvariantCulture,out var value) ? value : null;
+        double? hashPercent = db.Info.Mode == VerificationMode.Sha256 && files > 0 && db.Summary(source,destination,db.Info.Mode).Unverified == 0 ? 100d * hashes / files : null;
+        var rows = db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified))
+            .Concat(db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is DifferenceKind.QuickMatch or DifferenceKind.Verified)).Take(1000).ToArray();
+        return new(db.Info,db.Summary(source,destination,db.Info.Mode),rows,sourceCheck,report,transfer,hashPercent);
+    }
     public IReadOnlyList<JobInfo> History()
     {
         string root = Path.Combine(storageParent, "SafeFileSync");

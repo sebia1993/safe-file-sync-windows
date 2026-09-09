@@ -27,7 +27,14 @@ public partial class MainWindow : Window
         Mode.SelectedIndex = (int)selected.Info.Mode; ReplaceExisting.IsChecked = selected.Info.Conflicts == ConflictPolicy.ReplaceAfterVerification;
         await Run(true, selected.Info.Id);
     }
-    private async Task Run(bool copy, string? id = null)
+    private async void RetryFailed(object sender, RoutedEventArgs e)
+    {
+        if (History.SelectedItem is not HistoryRow selected) { Status.Text = "재시도할 작업을 선택하세요."; return; }
+        SourcePath.Text = selected.Info.Source; DestinationPath.Text = selected.Info.Destination;
+        Mode.SelectedIndex = (int)selected.Info.Mode; ReplaceExisting.IsChecked = selected.Info.Conflicts == ConflictPolicy.ReplaceAfterVerification;
+        await Run(true,selected.Info.Id,true);
+    }
+    private async Task Run(bool copy, string? id = null, bool failedOnly = false)
     {
         string source = SourcePath.Text, destination = DestinationPath.Text;
         var mode = (VerificationMode)Mode.SelectedIndex;
@@ -42,10 +49,11 @@ public partial class MainWindow : Window
             Summary.Text = $"처리 {p.CompletedFiles:N0}/{p.TotalFiles:N0} 파일 · {p.CompletedBytes / 1048576d:N1} MiB / {p.TotalBytes / 1048576d:N1} MiB · 전체 경과 기준 {speed / 1048576:N1} MiB/s · {elapsed.Elapsed:hh\\:mm\\:ss} 경과";
         });
         try {
-            var result = await Task.Run(() => coordinator.RunAsync(source, destination, mode, conflicts, copy, progress, cancellation.Token, id));
+            var result = await Task.Run(() => coordinator.RunAsync(source, destination, mode, conflicts, copy, progress, cancellation.Token, id, failedOnly));
             var s = result.Summary;
-            Status.Text = $"작업 상태: {LocalStatus(result.Info.Status)} · 원본 검사: {result.SourceCheck}";
-            Summary.Text = $"검증 일치 {s.Matched:N0} · 누락 {s.Missing:N0} · 불일치 {s.Different:N0} · 목적지 추가 {s.Extra:N0} · 검사 불가 {s.Unverified:N0} · 복제율 {(s.Percent is null ? "빈 폴더 (백분율 해당 없음)" : s.Percent.Value.ToString("F2") + "%")} · {mode}";
+            Status.Text = $"작업: {LocalStatus(result.Info.Status)} · 전송 처리: {(result.TransferPercent is null ? "해당 없음" : result.TransferPercent.Value.ToString("F1") + "%")} · 원본 검사: {result.SourceCheck}";
+            Progress.Value = result.TransferPercent ?? s.Percent ?? 0;
+            Summary.Text = $"검증 일치 {s.Matched:N0} · 누락 {s.Missing:N0} · 불일치 {s.Different:N0} · 목적지 추가 {s.Extra:N0} · 검사 불가 {s.Unverified:N0} · 복제율 {(s.Percent is null ? "빈 폴더 (백분율 해당 없음)" : s.Percent.Value.ToString("F2") + "%")} · SHA-256: {(mode == VerificationMode.Quick ? "전체 검증 미실시" : result.HashPercent is null ? "파일 없음 또는 판단 불가" : result.HashPercent.Value.ToString("F2") + "%")}";
             Differences.ItemsSource = result.Rows.Select(d => new { Path = d.RelativePath, Status = DifferenceStatus(d.Kind), Source = d.Source?.Kind == EntryKind.Directory ? "폴더" : d.Source?.Length.ToString("N0") ?? "없음", Destination = d.Destination?.Kind == EntryKind.Directory ? "폴더" : d.Destination?.Length.ToString("N0") ?? "없음" });
             FillTree(SourceTree, result.Rows.Select(r => r.Source)); FillTree(DestinationTree, result.Rows.Select(r => r.Destination));
             report = result.ReportPath; ReportButton.IsEnabled = report is not null;
@@ -56,7 +64,7 @@ public partial class MainWindow : Window
             if (closeWhenStopped) Close();
         }
     }
-    private void SetBusy(bool busy) { Settings.IsEnabled = CompareButton.IsEnabled = CopyButton.IsEnabled = ResumeButton.IsEnabled = History.IsEnabled = !busy; CancelButton.IsEnabled = busy; }
+    private void SetBusy(bool busy) { Settings.IsEnabled = CompareButton.IsEnabled = CopyButton.IsEnabled = ResumeButton.IsEnabled = RetryButton.IsEnabled = History.IsEnabled = !busy; CancelButton.IsEnabled = busy; }
     private void RefreshHistory() { try { History.ItemsSource = coordinator.History().Select(j => new HistoryRow(j, $"{j.StartedUtc} · {LocalStatus(j.Status)} · {j.Destination}")).ToArray(); } catch (Exception ex) { Status.Text = "작업 이력 읽기 실패: " + ex.Message; } }
     private void OpenReport(object sender, RoutedEventArgs e) { if (report is not null) Process.Start(new ProcessStartInfo(report) { UseShellExecute = true }); }
     private void OnClosing(object? sender, CancelEventArgs e) { if (cancellation is not null) { e.Cancel = true; closeWhenStopped = true; cancellation.Cancel(); Status.Text = "작업을 안전하게 중지한 뒤 종료합니다."; } }

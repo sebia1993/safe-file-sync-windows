@@ -173,6 +173,17 @@ public sealed class TransferTests : IDisposable
         AssertCompleted(result); Assert.Equal(hash,Digest(Path.Combine(Destination,"large.bin"))); Assert.Equal(hash,Digest(path)); Assert.Equal(time,File.GetLastWriteTimeUtc(path));
         Console.WriteLine($"512 MiB + 17 byte file copied and verified in {timer.Elapsed.TotalSeconds:F2}s.");
     }
+    [Fact] public async Task FailedOnlyRetryDoesNotCopyNewUnrelatedFiles()
+    {
+        File.WriteAllText(Path.Combine(Source,"failed.txt"),"source"); File.WriteAllText(Path.Combine(Destination,"failed.txt"),"conflict");
+        var coordinator = new TransferCoordinator(Storage);
+        var initial = await coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+        Assert.Equal("NeedsAttention",initial.Info.Status);
+        File.Delete(Path.Combine(Destination,"failed.txt")); File.WriteAllText(Path.Combine(Source,"new.txt"),"new work");
+        var retried = await coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,resumeId:initial.Info.Id,failedOnly:true);
+        Assert.Equal("source",File.ReadAllText(Path.Combine(Destination,"failed.txt"))); Assert.False(File.Exists(Path.Combine(Destination,"new.txt")));
+        Assert.Equal("NeedsAttention",retried.Info.Status); Assert.Equal(50,retried.TransferPercent); Assert.Equal(50,retried.HashPercent);
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);
