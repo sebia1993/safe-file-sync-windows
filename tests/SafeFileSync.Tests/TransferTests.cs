@@ -190,6 +190,21 @@ public sealed class TransferTests : IDisposable
         AssertCompleted(result); Assert.True(File.Exists(result.Info.DatabasePath));
         Assert.DoesNotContain(Directory.GetFiles(Source,"*",SearchOption.AllDirectories),p => p.EndsWith(".sqlite"));
     }
+    [Fact] public async Task DanglingLinkInResumedStagingCannotCreateAFileInsideSource()
+    {
+        File.WriteAllText(Path.Combine(Source,"payload.txt"),"important");
+        using var cts = new CancellationTokenSource(); cts.Cancel(); var coordinator = new TransferCoordinator(Storage);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,token:cts.Token));
+        var job = Assert.Single(coordinator.History());
+        var stage = Path.Combine(Destination,".safefilesync-" + job.Id); Directory.CreateDirectory(stage);
+        string link = Path.Combine(stage,"payload.txt"), forbidden = Path.Combine(Source,"must-not-be-created.txt");
+        File.CreateSymbolicLink(link,forbidden);
+        try {
+            var result = await coordinator.RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id);
+            Assert.Equal("NeedsAttention",result.Info.Status); Assert.False(File.Exists(forbidden)); Assert.False(File.Exists(Path.Combine(Destination,"payload.txt")));
+            Assert.Equal("important",File.ReadAllText(Path.Combine(Source,"payload.txt")));
+        } finally { File.Delete(link); }
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);

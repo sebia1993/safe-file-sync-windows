@@ -81,11 +81,17 @@ public sealed class TransferCoordinator
                             string stageDirectory = workspace.EnsureDestinationDirectory(Path.Combine(stageRelative, batchParent));
                             string stageFile = Path.Combine(stageDirectory, Path.GetFileName(sourceFile));
                             bool needsCopy = true;
-                            if (File.Exists(stageFile)) {
+                            FileAttributes? stageAttributes = null;
+                            try { stageAttributes = File.GetAttributes(NativeFiles.Extended(stageFile)); }
+                            catch (FileNotFoundException) { }
+                            catch (DirectoryNotFoundException) { }
+                            if (stageAttributes is not null) {
+                                if (stageAttributes.Value.HasFlag(FileAttributes.ReparsePoint) || stageAttributes.Value.HasFlag(FileAttributes.Directory))
+                                    throw new IOException("임시 경로 링크/폴더 차단");
                                 using var staged = NativeFiles.OpenRead(stageFile);
                                 var stageInfo = NativeFiles.Info(staged.SafeFileHandle);
                                 if (stageInfo.Links != 1) throw new IOException("임시 파일 하드링크 차단");
-                                if (stageInfo.Length == entry.Length && FolderScanner.Hash(staged, token) == hash) needsCopy = false;
+                                if (stageInfo.Length == entry.Length && stageInfo.WriteTicks == entry.LastWriteUtcTicks && FolderScanner.Hash(staged, token) == hash) needsCopy = false;
                             }
                             prepared.Add((entry, stream, hash, stageFile, needsCopy)); stream = null;
                             db.Outcome(entry.RelativePath, "Copying");
