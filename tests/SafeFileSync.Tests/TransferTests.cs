@@ -216,6 +216,15 @@ public sealed class TransferTests : IDisposable
             string target=Path.Combine(Destination,"readonly.txt"); if (File.Exists(target)) File.SetAttributes(target,FileAttributes.Normal);
         }
     }
+    [Fact] public void ExecutionArgumentsRejectWildcardsMixedDirectoriesAndOverlap()
+    {
+        Assert.Throws<ArgumentException>(() => RobocopyArgumentBuilder.BuildFiles([Path.Combine(Source,"*")],Destination));
+        Assert.Throws<ArgumentException>(() => RobocopyArgumentBuilder.BuildFiles([Path.Combine(Source,"a"),Path.Combine(Destination,"b")],Storage));
+        Assert.Throws<ArgumentException>(() => RobocopyArgumentBuilder.BuildFiles([Path.Combine(Source,"a")],Path.Combine(Source,"staging")));
+        var arguments=RobocopyArgumentBuilder.BuildFiles([Path.Combine(Source,"한글 name.txt")],Destination);
+        Assert.Equal("한글 name.txt",arguments[2]); Assert.Contains("/MT:8",arguments);
+        Assert.DoesNotContain(arguments,a => new[]{"/MOV","/MOVE","/MIR","/PURGE"}.Contains(a));
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);
