@@ -27,7 +27,7 @@ internal static class NativeFiles
     internal static SafeFileHandle OpenDirectory(string path)
     {
         // OPEN_EXISTING, BACKUP_SEMANTICS, OPEN_REPARSE_POINT; no DELETE sharing pins the name.
-        var handle = CreateFileW(Extended(path), 0, 1, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        var handle = CreateFileW(Extended(path), 1, 1, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
         if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error(), "폴더 핸들을 열 수 없습니다: " + path); }
         try {
             var info = Info(handle);

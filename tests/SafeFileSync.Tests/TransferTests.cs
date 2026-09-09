@@ -118,5 +118,36 @@ public sealed class TransferTests : IDisposable
     }
     [Fact] public void MissingHashIsUnverified() => Assert.Equal(DifferenceKind.Unverified,EntryComparer.Compare(new("a",EntryKind.File),new("a",EntryKind.File),VerificationMode.Sha256).Kind);
     [Fact] public void ExclusionsAreNotSuccessfulExtras() => Assert.Equal(DifferenceKind.Unverified,EntryComparer.Compare(null,new("link",EntryKind.Excluded),VerificationMode.Quick).Kind);
+    [Fact] public async Task ChangesBeforeFinalScanPreventSuccess()
+    {
+        Seed(); bool changed = false;
+        var progress = new ImmediateProgress(p => {
+            if (p.Phase == "스캔: source-after" && !changed) { File.WriteAllText(Path.Combine(Source,"new-after-copy.txt"),"external change"); changed = true; }
+        });
+        var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,progress);
+        Assert.True(changed); Assert.Equal("NeedsAttention",result.Info.Status); Assert.DoesNotContain("PASS",result.SourceCheck);
+    }
+    [Fact] public async Task CancelDuringCopyNeverPublishesPartialFile()
+    {
+        File.WriteAllBytes(Path.Combine(Source,"cancel.dat"),RandomNumberGenerator.GetBytes(8 * 1024 * 1024)); var before = Snapshot();
+        using var cts = new CancellationTokenSource();
+        var progress = new ImmediateProgress(p => { if (p.Phase == "임시 복사본 SHA-256 검증") cts.Cancel(); });
+        await Assert.ThrowsAsync<OperationCanceledException>(() => new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,progress,cts.Token));
+        Assert.False(File.Exists(Path.Combine(Destination,"cancel.dat"))); AssertUnchanged(before);
+        var job = Assert.Single(new TransferCoordinator(Storage).History());
+        var resumed = await new TransferCoordinator(Storage).RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id);
+        Assert.Equal("Completed",resumed.Info.Status); AssertUnchanged(before);
+    }
+    [Fact] public async Task SameSizeTimeCorruptionIsRepairedByHashMode()
+    {
+        string src = Path.Combine(Source,"same.txt"), dst = Path.Combine(Destination,"same.txt");
+        File.WriteAllText(src,"AAAA"); File.WriteAllText(dst,"BBBB"); File.SetLastWriteTimeUtc(dst,File.GetLastWriteTimeUtc(src));
+        var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.ReplaceAfterVerification,true);
+        Assert.Equal("Completed",result.Info.Status); Assert.Equal("AAAA",File.ReadAllText(dst));
+    }
+    private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
+    {
+        public void Report(TransferProgress value) => callback(value);
+    }
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateHardLinkW(string name,string existing,IntPtr security);
 }
