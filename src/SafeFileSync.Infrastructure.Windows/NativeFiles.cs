@@ -51,6 +51,13 @@ internal static class NativeFiles
         if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + path[8..];
         return path.StartsWith(@"\\?\") ? path[4..] : path;
     }
+    internal static FileStream CreateOwnedLog(string path)
+    {
+        // CREATE_NEW with read access: the child may write, but the name cannot be replaced while pinned.
+        var handle = CreateFileW(Extended(path),0x80000000,3,IntPtr.Zero,1,0x80,IntPtr.Zero);
+        if (handle.IsInvalid) { var code=Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); }
+        return new FileStream(handle,FileAccess.Read,4096);
+    }
     internal static FileStream OpenRead(string path)
     {
         // FileShare.Read forbids concurrent content writers and deletion while hashing/copying.

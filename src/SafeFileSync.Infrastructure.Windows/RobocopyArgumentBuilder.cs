@@ -3,13 +3,13 @@ namespace SafeFileSync.Infrastructure.Windows;
 public static class RobocopyArgumentBuilder
 {
     private static readonly string[] FolderOptions = ["/E", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/DCOPY:DAT", "/XJ"];
-    private static readonly string[] FileOptions = ["/MT:8", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS", "/UNICODE"];
+    private static readonly string[] FileOptions = ["/MT:8", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS", "/TEE"];
     public static IReadOnlyList<string> BuildPreview(string source, string destination)
     {
         PathSafetyService.ValidatePair(source, destination);
         return Array.AsReadOnly(new[] { PathSafetyService.Normalize(source), PathSafetyService.Normalize(destination) }.Concat(FolderOptions).ToArray());
     }
-    public static IReadOnlyList<string> BuildFiles(IReadOnlyList<string> sourceFiles, string stagingDirectory)
+    public static IReadOnlyList<string> BuildFiles(IReadOnlyList<string> sourceFiles, string stagingDirectory, string? logPath = null)
     {
         if (sourceFiles.Count is < 1 or > 32) throw new ArgumentException("한 번에 1~32개의 파일이 필요합니다.");
         string parent = Path.GetDirectoryName(PathSafetyService.Normalize(sourceFiles[0]))!;
@@ -24,6 +24,13 @@ public static class RobocopyArgumentBuilder
             args.Add(Path.GetFileName(normalized));
         }
         ValidateOptions(FileOptions); args.AddRange(FileOptions);
+        if (logPath is not null) {
+            logPath = PathSafetyService.Normalize(logPath);
+            if (!string.Equals(Path.GetDirectoryName(logPath),stagingDirectory,StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("로그는 검증된 임시 폴더 바로 아래에 있어야 합니다.");
+            new SourceProtectionGuard(parent).Demand(logPath,FileOperation.Create);
+            args.Add("/UNILOG:" + logPath);
+        }
         if (args.Sum(a => a.Length + 3) > 30000) throw new ArgumentException("Robocopy 명령줄 길이 제한을 초과합니다.");
         return args.AsReadOnly();
     }

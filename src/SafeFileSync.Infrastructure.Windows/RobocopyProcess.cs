@@ -15,9 +15,12 @@ public sealed class RobocopyProcess
     public async Task<CopyResult> CopyFilesAsync(IReadOnlyList<string> sourceFiles, string stagingDirectory,
         Action<double>? progress, CancellationToken token)
     {
-        var arguments = RobocopyArgumentBuilder.BuildFiles(sourceFiles,stagingDirectory);
+        string logPath=Path.Combine(stagingDirectory,".robocopy-" + Guid.NewGuid().ToString("N") + ".log");
+        var arguments = RobocopyArgumentBuilder.BuildFiles(sourceFiles,stagingDirectory,logPath);
+        token.ThrowIfCancellationRequested();
+        using var log = NativeFiles.CreateOwnedLog(PathSafetyService.Normalize(logPath));
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "robocopy.exe")) {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.Unicode, StandardErrorEncoding = Encoding.Unicode
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = start };
@@ -41,6 +44,9 @@ public sealed class RobocopyProcess
         try { await process.WaitForExitAsync(CancellationToken.None); await Task.WhenAll(stdout, stderr); }
         finally { if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); } }
         token.ThrowIfCancellationRequested();
-        return new(process.ExitCode, output.ToString());
+        log.Position = Math.Max(0,(log.Length-16384) & ~1L);
+        using var logReader = new StreamReader(log,Encoding.Unicode,true,4096,true);
+        string unicodeLog = await logReader.ReadToEndAsync(token);
+        return new(process.ExitCode, unicodeLog.Length > 0 ? unicodeLog : output.ToString());
     }
 }
