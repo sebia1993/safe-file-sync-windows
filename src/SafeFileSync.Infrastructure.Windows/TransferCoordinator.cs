@@ -136,6 +136,7 @@ public sealed class TransferCoordinator
                 token.ThrowIfCancellationRequested();
                 var entry = difference.Source;
                 if (entry is null) continue;
+                if (entry.Kind == EntryKind.Excluded) { failures++; db.Outcome(entry.RelativePath,"Excluded",entry.Detail ?? "링크 제외"); continue; }
                 if (retryPaths is not null && !retryPaths.Contains(entry.RelativePath) && difference.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified)) continue;
                 if (entry.Kind == EntryKind.Directory) {
                     await Flush();

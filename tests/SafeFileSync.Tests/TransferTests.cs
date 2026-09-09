@@ -231,6 +231,18 @@ public sealed class TransferTests : IDisposable
         var result=await new RobocopyProcess().CopyFileAsync(file,Destination,null,default);
         Assert.False(result.Failed,result.Output); Assert.Contains(name,result.Output); Assert.Equal("source data",File.ReadAllText(Path.Combine(Destination,name))); AssertUnchanged(before);
     }
+    [Fact] public async Task NestedSourceJunctionIsExcludedWithoutPreventingRegularFileCopy()
+    {
+        File.WriteAllText(Path.Combine(Source,"regular.txt"),"copy me");
+        string outside=Path.Combine(root,"outside"), link=Path.Combine(Source,"link"); Directory.CreateDirectory(outside); File.WriteAllText(Path.Combine(outside,"secret.txt"),"leave unchanged");
+        using var process=Process.Start(new ProcessStartInfo("cmd.exe") { Arguments=$"/c mklink /J \"{link}\" \"{outside}\"",UseShellExecute=false,CreateNoWindow=true })!; process.WaitForExit(); Assert.Equal(0,process.ExitCode);
+        try {
+            var result=await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+            Assert.Equal("NeedsAttention",result.Info.Status); Assert.Equal("copy me",File.ReadAllText(Path.Combine(Destination,"regular.txt")));
+            Assert.False(Directory.Exists(Path.Combine(Destination,"link"))); Assert.Equal("leave unchanged",File.ReadAllText(Path.Combine(outside,"secret.txt")));
+            Assert.True(result.Summary.Unverified>0); Assert.Null(result.HashPercent);
+        } finally { Directory.Delete(link); }
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);
