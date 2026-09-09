@@ -17,6 +17,8 @@ $src = Join-Path $fixture 'source'
 $dst = Join-Path $fixture 'destination'
 New-Item -ItemType Directory -Path $src,$dst | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'example.txt'),'UI transfer source')
+New-Item -ItemType Directory -Path (Join-Path $src 'nested') | Out-Null
+[IO.File]::WriteAllText((Join-Path $src 'nested/child.txt'),'nested source')
 $process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
 try {
  $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -55,6 +57,7 @@ try {
  if (-not $summary.Contains('전체 검증 미실시')) { throw "Quick verification mislabeled: $summary" }
  Write-Output "WPF UI compare/copy flow passed. $summary"
  Start-Sleep -Milliseconds 300
+ function Capture-Window([string]$name) {
  $rect = New-Object SfsWindowCapture+RECT
  if (-not [SfsWindowCapture]::GetWindowRect($process.MainWindowHandle,[ref]$rect)) { throw 'Could not get window bounds.' }
  $bitmap = New-Object System.Drawing.Bitmap(($rect.Right-$rect.Left),($rect.Bottom-$rect.Top))
@@ -62,8 +65,25 @@ try {
  $dc = $graphics.GetHdc()
  try { if (-not [SfsWindowCapture]::PrintWindow($process.MainWindowHandle,$dc,2)) { throw 'Window capture failed.' } } finally { $graphics.ReleaseHdc($dc) }
  New-Item -ItemType Directory -Path artifacts/ui -Force | Out-Null
- $bitmap.Save((Join-Path (Get-Location) 'artifacts/ui/wpf-copy-result.png'),[System.Drawing.Imaging.ImageFormat]::Png)
+ $bitmap.Save((Join-Path (Get-Location) ('artifacts/ui/' + $name)),[System.Drawing.Imaging.ImageFormat]::Png)
  $graphics.Dispose(); $bitmap.Dispose()
+ }
+ Capture-Window 'wpf-copy-result.png'
+ $tab = Find-Element '양쪽 폴더'
+ $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+ foreach ($treeName in @('원본 폴더 내용','목적지 폴더 내용')) {
+  $tree = Find-Element $treeName
+  $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'nested')
+  $folder = $tree.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+  if ($null -eq $folder) { throw "Nested folder missing in $treeName" }
+  $folder.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+  $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'child.txt')
+  if ($null -eq $folder.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)) { throw "Child item missing in $treeName" }
+ }
+ if ([IO.File]::ReadAllText((Join-Path $dst 'nested/child.txt')) -ne 'nested source') { throw 'Nested UI copy content differs.' }
+ Start-Sleep -Milliseconds 300
+ Capture-Window 'wpf-folders.png'
+ Write-Output 'Both source and destination folder trees passed UI inspection.'
  $null = $process.CloseMainWindow()
  if (-not $process.WaitForExit(10000)) { throw 'UI close failed.' }
 } finally {
