@@ -24,6 +24,12 @@ public sealed class SmbTests
             Assert.True(result.Info.Status == "Completed", string.Join("; ",db.Outcomes().Select(o=>o.Detail)) + result.SourceCheck);
             Assert.Equal(bytes,File.ReadAllBytes(Path.Combine(local,"dest","한글 data.bin")));
             Assert.Equal(bytes,File.ReadAllBytes(original)); Assert.Equal(time,File.GetLastWriteTimeUtc(original).Ticks);
+            File.WriteAllText(Path.Combine(local,"dest","한글 data.bin"),"damaged destination");
+            var replaced = await new TransferCoordinator(Path.Combine(local,"storage")).RunAsync(src,dst,VerificationMode.Sha256,ConflictPolicy.ReplaceAfterVerification,true);
+            using var replacedDb = new JobStore(replaced.Info.DatabasePath,true);
+            Assert.True(replaced.Info.Status == "Completed",string.Join("; ",replacedDb.Outcomes().Select(o=>o.Detail)));
+            Assert.Equal(bytes,File.ReadAllBytes(Path.Combine(local,"dest","한글 data.bin")));
+            Assert.Equal(bytes,File.ReadAllBytes(original)); Assert.Equal(time,File.GetLastWriteTimeUtc(original).Ticks);
             Assert.Throws<IOException>(() => RootSafetyLease.Acquire(Path.Combine(local,"source"),Path.Combine(uncRoot,id,"source")));
         } finally { Directory.Delete(local,true); }
     }

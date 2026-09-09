@@ -75,6 +75,18 @@ public sealed class TransferWorkspace : IDisposable
         }
         return full;
     }
+    public void TestDestinationWrite(string stagingRelative)
+    {
+        string stage = EnsureDestinationDirectory(stagingRelative);
+        string probe = Path.Combine(stage,".write-probe-" + Guid.NewGuid().ToString("N"));
+        guard.Demand(probe,FileOperation.Create); bool owned = false;
+        try {
+            using var stream = new FileStream(NativeFiles.Extended(probe),FileMode.CreateNew,FileAccess.Write,FileShare.None);
+            owned = true; stream.WriteByte(0); stream.Flush(true);
+        } finally {
+            if (owned) { guard.Demand(probe,FileOperation.Delete); File.Delete(NativeFiles.Extended(probe)); }
+        }
+    }
     public void CheckSpace(long required)
     {
         if (!NativeFiles.GetDiskFreeSpaceExW(NativeFiles.Extended(Destination), out var available, out _, out _))

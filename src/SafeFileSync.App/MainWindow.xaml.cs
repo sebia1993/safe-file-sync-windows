@@ -68,7 +68,7 @@ public partial class MainWindow : Window
         }
     }
     private void SetBusy(bool busy) { Settings.IsEnabled = CompareButton.IsEnabled = CopyButton.IsEnabled = ResumeButton.IsEnabled = RetryButton.IsEnabled = History.IsEnabled = !busy; CancelButton.IsEnabled = busy; }
-    private void RefreshHistory() { try { History.ItemsSource = coordinator.History().Select(j => new HistoryRow(j, $"{j.StartedUtc} · {LocalStatus(j.Status)} · {j.Destination}")).ToArray(); } catch (Exception ex) { Status.Text = "작업 이력 읽기 실패: " + ex.Message; } }
+    private void RefreshHistory() { try { History.ItemsSource = coordinator.History().Select(j => new HistoryRow(j, $"{j.StartedUtc} · {LocalStatus(j.Status)} · {j.Destination}")).ToArray(); if (History.Items.Count > 0) History.SelectedIndex = 0; } catch (Exception ex) { Status.Text = "작업 이력 읽기 실패: " + ex.Message; } }
     private void OpenReport(object sender, RoutedEventArgs e) { if (report is not null) Process.Start(new ProcessStartInfo(report) { UseShellExecute = true }); }
     private void OnClosing(object? sender, CancelEventArgs e) { if (cancellation is not null) { e.Cancel = true; closeWhenStopped = true; cancellation.Cancel(); Status.Text = "작업을 안전하게 중지한 뒤 종료합니다."; } }
     private static string LocalStatus(string status) => status switch { "Completed" => "완료", "Compared" => "비교 완료", "NeedsAttention" => "확인 필요", "Failed" => "실패", "Cancelled" => "중지됨", _ => "중단되었거나 진행 중 (재검사 필요)" };

@@ -205,6 +205,17 @@ public sealed class TransferTests : IDisposable
             Assert.Equal("important",File.ReadAllText(Path.Combine(Source,"payload.txt")));
         } finally { File.Delete(link); }
     }
+    [Fact] public async Task ReadOnlySourceFileCanBeCopiedWithoutChangingItsAttributes()
+    {
+        string file = Path.Combine(Source,"readonly.txt"); File.WriteAllText(file,"read-only source"); File.SetAttributes(file,FileAttributes.ReadOnly);
+        try {
+            var before = Snapshot(); var result = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+            AssertCompleted(result); AssertUnchanged(before);
+        } finally {
+            File.SetAttributes(file,FileAttributes.Normal);
+            string target=Path.Combine(Destination,"readonly.txt"); if (File.Exists(target)) File.SetAttributes(target,FileAttributes.Normal);
+        }
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);

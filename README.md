@@ -1,24 +1,62 @@
 # SafeFileSync for Windows
-Windows 11용 원본 보호 중심 폴더 복제·검증 도구. 로컬 및 사내 SMB/UNC 목적지를 목표로 합니다.
 
-현재: **Milestone 0 안전 기반 프로토타입**. 실제 복사는 아직 제공하지 않습니다.
+Windows 11에서 **원본을 읽기 전용으로 유지**하며 로컬 또는 SMB/UNC 폴더로 복사하고 결과를 검증하는 한국어 데스크톱 도구입니다. C# · .NET 10 · WPF · Robocopy · SQLite를 사용합니다.
 
-- C# / .NET 10 / WPF solution
-- 원본 Write/Delete/Move/Rename/Truncate/Create 차단 정책
-- 동일·중첩·모호한 경로 차단 (문자열 기준)
-- 허용 목록 기반 Robocopy 인자 미리보기, 임의 옵션 금지
-- Windows CI 단위 테스트와 WPF self-contained publish
+현재 버전은 **0.1.0-alpha.1**입니다. 자동 검증과 현장 검증 범위는 [검증 기록](docs/VALIDATION.md)을 확인하세요.
 
-## Build
+## 사용 순서
+
+1. 배포 ZIP을 전부 압축 해제하고 `SafeFileSync.App.exe`를 실행합니다. .NET 별도 설치나 관리자 실행은 필요하지 않습니다. EXE만 다른 곳으로 옮기지 마세요.
+2. 원본과 **이미 존재하는 목적지 폴더**를 선택합니다. UNC 경로를 직접 입력할 수 있으며 현재 Windows 로그인 계정의 SMB 권한을 사용합니다.
+3. `폴더 비교`로 누락·불일치·목적지 추가·검사 불가 항목을 확인합니다. 비교만으로 목적지에 파일을 복사하지 않습니다.
+4. 기본 정책은 기존 목적지 파일 보존입니다. 불일치 파일을 바꾸려면 `불일치 기존 파일을 검증 후 교체`를 선택합니다.
+5. `복사 시작`을 누릅니다. 작업별 임시 폴더에서 크기와 SHA-256을 확인한 파일만 최종 위치에 반영합니다.
+6. 전송 처리율, 원본 검사, 복제율, SHA-256 검증률을 각각 확인하고 `결과 보고서`를 엽니다.
+7. 중지/실패 후에는 이력에서 작업을 선택하여 재개하거나 실패 항목만 재시도합니다. 재개할 때 양쪽 폴더를 다시 검사하므로 오래된 완료 상태를 신뢰하지 않습니다. 작업 정책은 재개 시 유지됩니다.
+
+## 검증 방식
+
+| 방식 | 확인하는 내용 | 한계 |
+|---|---|---|
+| 빠른 검증 | 상대 경로, 파일/폴더 구분, 파일 크기와 수정시간 | 같은 크기·시간의 내용 변경은 찾지 못합니다. 전체 SHA-256 검증으로 표시하지 않습니다. |
+| SHA-256 | 파일 기본 데이터 스트림의 SHA-256 및 폴더 존재 | 원본과 목적지를 추가로 읽으므로 시간이 더 걸립니다. ACL/ADS 완전 복제가 아닙니다. |
+
+실제로 새로 전송하는 파일은 선택 모드와 관계없이 임시 복사본 SHA-256을 검사합니다. 목적지 추가 파일은 보존하며 별도로 표시합니다. 빈 폴더도 비교합니다. 오류나 제외된 링크가 있으면 완전 검증으로 계산하지 않습니다.
+
+## 원본 보호
+
+- 원본 삭제·이동·이름 변경·쓰기·truncate·파일 생성 기능이 없습니다.
+- `/MOV`, `/MOVE`, `/MIR`, `/PURGE`와 사용자 지정 Robocopy 옵션을 허용하지 않습니다.
+- 동일/중첩 경로, reparse point, 목적지 하드링크, 확인된 물리 경로 별칭을 차단합니다.
+- 전송 중 해당 원본 파일을 읽기 핸들로 잠그고 전후 manifest를 비교합니다.
+- 기존 목적지 파일은 검증된 복사본을 원자적으로 반영할 때까지 보존합니다. 목적지 추가 파일을 정리하는 기능은 없습니다.
+- 자격 증명을 저장하거나 회사 보안 정책을 우회하지 않습니다.
+
+[안전 모델](docs/SAFETY_MODEL.md)에 보장 범위와 한계를 설명했습니다.
+
+## 기록과 임시 파일
+
+작업 DB와 HTML 보고서는 `%LOCALAPPDATA%\SafeFileSync`에 저장합니다. 이 위치가 원본/목적지와 겹치면 작업을 차단합니다. 이력은 최근 100개 작업, 화면은 차이 항목을 우선한 최대 1,000개 항목을 표시합니다. 전체 결과는 HTML 보고서에 포함됩니다.
+
+목적지의 `.safefilesync-<작업 ID>`는 재개용 임시 영역입니다. 취소된 복사본과 빈 작업 폴더를 보존하며 자동으로 재귀 삭제하지 않습니다. 더 이상 재개하지 않을 작업의 임시 폴더는 작업 종료 후 사용자가 확인하여 정리할 수 있습니다. 현재 작업의 임시 영역만 해당 작업의 비교 결과에서 제외합니다.
+
+## 알려진 범위
+
+- Windows x64용 설치 없는 폴더 배포이며 현재 실행 파일은 Authenticode 서명이 없습니다.
+- GitHub Windows 러너의 로컬/loopback SMB와 GUI 자동 검증은 실제 사내 네트워크·EDR/DLP·물리 단절·Windows 11 현장 검증을 대신하지 않습니다.
+- SMB 시스템 호출이 응답하지 않으면 중지 요청 반영에 시간이 걸릴 수 있습니다.
+- 원본의 열린 쓰기 파일, 링크 또는 스캔 오류는 무시하지 않고 작업을 차단하거나 확인 필요로 표시합니다.
+- 단일 시점의 볼륨 스냅샷이나 NTFS 전체 복제 도구가 아닙니다. 악의적인 관리자/SMB 서버에 대한 OS 보안 경계도 아닙니다.
+- 필요한 전송량에 여유 공간을 더한 보수적인 사전 공간 검사를 수행합니다. 재개 시 임시 파일이 차지하는 공간도 고려하여 여유 공간을 확보하세요.
+
+## 개발
+
 ```powershell
-dotnet test SafeFileSync.slnx -c Release
+dotnet test SafeFileSync.slnx -c Release --filter "Category!=Smb"
 dotnet run --project src/SafeFileSync.App
+dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true -o artifacts/app
 ```
 
-GitHub Actions artifact는 경로 검사 개발용입니다. 실제 복사, SMB 연결, 물리 경로 별칭, 권한, 대용량 전송, EDR/DLP, GUI 수동 테스트는 아직 검증하지 않았습니다.
+SMB 테스트는 워크플로가 만드는 격리된 공유를 사용합니다. macOS 크로스 빌드는 Windows 실행 검증이 아니며 Windows CI 결과를 별도로 확인합니다.
 
-전송 진행률, 원본→목적지 복제율, 원본 변경 여부, SHA-256 검증률은 별개로 구현합니다. 목적지 추가 파일은 보존합니다. 자격 증명을 저장하거나 보안제품을 우회하지 않습니다.
-
-[개발 계획](CODEX_DEVELOPMENT_PLAN.md) · [안전 모델](docs/SAFETY_MODEL.md)
-Robocopy 옵션 근거: [Microsoft Learn](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/robocopy).
-
+[개발 계획](CODEX_DEVELOPMENT_PLAN.md) · [현장 점검](docs/ACCEPTANCE.md) · [Microsoft Robocopy 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/robocopy)

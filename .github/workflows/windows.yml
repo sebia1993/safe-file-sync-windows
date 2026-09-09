@@ -4,6 +4,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -27,10 +28,12 @@ jobs:
         with:
           name: ui-evidence
           path: artifacts/ui
+      - name: Package verified build and smoke-test extracted ZIP
+        run: ./scripts/Package.ps1
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: windows-safety-prototype
-          path: artifacts/app
+          name: release-package
+          path: artifacts/package/*
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

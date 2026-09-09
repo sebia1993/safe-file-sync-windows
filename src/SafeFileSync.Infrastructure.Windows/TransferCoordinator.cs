@@ -50,12 +50,16 @@ public sealed class TransferCoordinator
                 throw new IOException("원본 이름과 작업 임시 영역이 충돌합니다.");
             var totals = db.Entries("source-before").Where(e => e.Kind == EntryKind.File).Aggregate((Files: 0L, Bytes: 0L), (v,e) => (v.Files + 1, checked(v.Bytes + e.Length)));
             // Reserve pending payload; already matched files and preserved conflicts need no staging space.
-            long pendingBytes = db.Compare("source-before","destination-before",mode)
+            var pending = db.Compare("source-before","destination-before",mode)
                 .Where(d => d.Source?.Kind == EntryKind.File && d.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified)
                     && (d.Destination is null || conflicts == ConflictPolicy.ReplaceAfterVerification)
                     && (retryPaths is null || retryPaths.Contains(d.RelativePath)))
-                .Aggregate(0L,(sum,d) => checked(sum + d.Source!.Length));
-            if (pendingBytes > 0) workspace.CheckSpace(checked(pendingBytes + 16 * 1024 * 1024));
+                .Aggregate((Bytes:0L,Files:0L),(sum,d) => (checked(sum.Bytes + d.Source!.Length),sum.Files+1));
+            if (pending.Files > 0) {
+                progress?.Report(new("목적지 공간·쓰기 권한 검사",workspace.Destination));
+                workspace.CheckSpace(checked(pending.Bytes + 16 * 1024 * 1024));
+                workspace.TestDestinationWrite(stageRelative);
+            }
             long done = 0, bytes = 0, failures = 0;
             var engine = new RobocopyProcess();
             db.SetStatus("Copying");
