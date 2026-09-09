@@ -1,1 +1,1 @@
-<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../SafeFileSync.Core/SafeFileSync.Core.csproj"/></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../SafeFileSync.Core/SafeFileSync.Core.csproj"/><PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12"/><PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5"/></ItemGroup></Project>
