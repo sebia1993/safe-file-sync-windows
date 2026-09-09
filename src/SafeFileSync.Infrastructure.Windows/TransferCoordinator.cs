@@ -49,9 +49,13 @@ public sealed class TransferCoordinator
             if (db.Entries("source-before").Any(e => e.RelativePath.Split('\\')[0].Equals(stageRelative, StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("원본 이름과 작업 임시 영역이 충돌합니다.");
             var totals = db.Entries("source-before").Where(e => e.Kind == EntryKind.File).Aggregate((Files: 0L, Bytes: 0L), (v,e) => (v.Files + 1, checked(v.Bytes + e.Length)));
-            // Conservative reserve: complete source payload plus 16 MiB. Existing destination files remain until commit.
-            workspace.CheckSpace(checked(totals.Bytes + 16 * 1024 * 1024));
-            workspace.EnsureDestinationDirectory(stageRelative);
+            // Reserve pending payload; already matched files and preserved conflicts need no staging space.
+            long pendingBytes = db.Compare("source-before","destination-before",mode)
+                .Where(d => d.Source?.Kind == EntryKind.File && d.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified)
+                    && (d.Destination is null || conflicts == ConflictPolicy.ReplaceAfterVerification)
+                    && (retryPaths is null || retryPaths.Contains(d.RelativePath)))
+                .Aggregate(0L,(sum,d) => checked(sum + d.Source!.Length));
+            if (pendingBytes > 0) workspace.CheckSpace(checked(pendingBytes + 16 * 1024 * 1024));
             long done = 0, bytes = 0, failures = 0;
             var engine = new RobocopyProcess();
             db.SetStatus("Copying");
@@ -88,6 +92,7 @@ public sealed class TransferCoordinator
                         } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
                         finally { stream?.Dispose(); }
                     }
+                    db.FlushOutcomes(); // Persist in-progress files before starting the child process.
                     var required = prepared.Where(p => p.NeedsCopy).ToArray();
                     CopyResult result = new(0, "검증된 임시 복사본 재사용");
                     if (required.Length > 0) {
@@ -114,7 +119,7 @@ public sealed class TransferCoordinator
                             progress?.Report(new("복사", item.Entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
                         } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(item.Entry.RelativePath, "Failed", ex.Message); }
                     }
-                } finally { foreach (var item in prepared) item.Source.Dispose(); batch.Clear(); }
+                } finally { foreach (var item in prepared) item.Source.Dispose(); batch.Clear(); db.FlushOutcomes(); }
             }
             foreach (var difference in db.Compare("source-before", "destination-before", mode)) {
                 token.ThrowIfCancellationRequested();

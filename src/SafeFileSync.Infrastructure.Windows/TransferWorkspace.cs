@@ -51,12 +51,13 @@ public sealed class TransferWorkspace : IDisposable
             if (entry.Kind == EntryKind.Directory) CheckDestinationDirectory(Combine(Destination, entry.RelativePath));
         }
     }
-    private void CheckDestinationDirectory(string path)
+    private void CheckDestinationDirectory(string path, bool revalidate = false)
     {
-        if (pinnedDestinations.Contains(path)) return;
+        if (pinnedDestinations.Contains(path) && !revalidate) return;
         var lease = DirectoryLease.Acquire(path);
         if (lease.Identities.Any(sourceIdentities.Contains)) { lease.Dispose(); throw new IOException("목적지 별칭이 원본 영역을 가리킵니다."); }
-        pins.Add(lease); pinnedDestinations.Add(path);
+        if (pinnedDestinations.Contains(path)) lease.Dispose();
+        else { pins.Add(lease); pinnedDestinations.Add(path); }
     }
     public string EnsureDestinationDirectory(string relative)
     {
@@ -81,6 +82,8 @@ public sealed class TransferWorkspace : IDisposable
         string target = Combine(Destination, relative);
         guard.Demand(target, FileOperation.Write); guard.Demand(stagedFile, FileOperation.Move);
         if (!PathSafetyService.IsWithin(stagedFile, Destination)) throw new IOException("임시 파일이 목적지 밖에 있습니다.");
+        CheckDestinationDirectory(Path.GetDirectoryName(target)!, true);
+        CheckDestinationDirectory(Path.GetDirectoryName(stagedFile)!, true);
         if (Directory.Exists(target)) throw new IOException("목적지에 동일한 이름의 폴더가 있습니다.");
         if (File.Exists(target)) {
             if (conflicts != ConflictPolicy.ReplaceAfterVerification) throw new IOException("기존 목적지 파일 보존 정책으로 교체하지 않았습니다.");

@@ -6,6 +6,7 @@ namespace SafeFileSync.Infrastructure.Windows;
 public sealed class JobStore : IDisposable
 {
     private readonly SqliteConnection connection;
+    private readonly Dictionary<string,(string Status,string Detail)> pendingOutcomes = new(StringComparer.OrdinalIgnoreCase);
     public string DatabasePath { get; }
     public JobInfo Info => JsonSerializer.Deserialize<JobInfo>(Get("job")!)!;
     public JobStore(string path, bool readOnly = false)
@@ -16,7 +17,7 @@ public sealed class JobStore : IDisposable
         if (!readOnly) Execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY; CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS entries(snapshot TEXT NOT NULL,k TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(snapshot,k)); CREATE TABLE IF NOT EXISTS outcomes(k TEXT PRIMARY KEY,status TEXT NOT NULL,detail TEXT NOT NULL);");
     }
     public void Initialize(JobInfo info) => Set("job", JsonSerializer.Serialize(info));
-    public void SetStatus(string status) => Initialize(Info with { Status = status });
+    public void SetStatus(string status) { FlushOutcomes(); Initialize(Info with { Status = status }); }
     public string? Get(string key)
     {
         using var command = connection.CreateCommand(); command.CommandText = "SELECT v FROM meta WHERE k=$k";
@@ -80,15 +81,26 @@ public sealed class JobStore : IDisposable
     }
     public void Outcome(string relative, string status, string detail = "")
     {
-        using var cmd = connection.CreateCommand(); cmd.CommandText = "INSERT INTO outcomes VALUES($k,$s,$d) ON CONFLICT(k) DO UPDATE SET status=$s,detail=$d";
-        cmd.Parameters.AddWithValue("$k", relative); cmd.Parameters.AddWithValue("$s", status); cmd.Parameters.AddWithValue("$d", detail); cmd.ExecuteNonQuery();
+        pendingOutcomes[relative] = (status,detail);
+        if (pendingOutcomes.Count >= 128) FlushOutcomes();
+    }
+    public void FlushOutcomes()
+    {
+        if (pendingOutcomes.Count == 0) return;
+        using var tx = connection.BeginTransaction();
+        using var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO outcomes VALUES($k,$s,$d) ON CONFLICT(k) DO UPDATE SET status=$s,detail=$d";
+        var key = cmd.Parameters.Add("$k",SqliteType.Text); var status = cmd.Parameters.Add("$s",SqliteType.Text); var detail = cmd.Parameters.Add("$d",SqliteType.Text);
+        foreach (var item in pendingOutcomes) { key.Value=item.Key; status.Value=item.Value.Status; detail.Value=item.Value.Detail; cmd.ExecuteNonQuery(); }
+        tx.Commit(); pendingOutcomes.Clear();
     }
     public IEnumerable<(string Path,string Status,string Detail)> Outcomes()
     {
+        FlushOutcomes();
         using var cmd = connection.CreateCommand(); cmd.CommandText = "SELECT k,status,detail FROM outcomes ORDER BY k";
         using var reader = cmd.ExecuteReader(); while (reader.Read()) yield return (reader.GetString(0),reader.GetString(1),reader.GetString(2));
     }
     private void RequireComplete(string name) { if (Get("complete:" + name) != "1") throw new InvalidOperationException("완료되지 않은 스캔입니다: " + name); }
     private void Execute(string sql) { using var cmd = connection.CreateCommand(); cmd.CommandText = sql; cmd.ExecuteNonQuery(); }
-    public void Dispose() => connection.Dispose();
+    public void Dispose() { try { FlushOutcomes(); } finally { connection.Dispose(); } }
 }
