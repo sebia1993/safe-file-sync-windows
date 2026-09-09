@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using SafeFileSync.Core;
 using SafeFileSync.Infrastructure.Windows;
 using Xunit;
@@ -242,6 +244,27 @@ public sealed class TransferTests : IDisposable
             Assert.False(Directory.Exists(Path.Combine(Destination,"link"))); Assert.Equal("leave unchanged",File.ReadAllText(Path.Combine(outside,"secret.txt")));
             Assert.True(result.Summary.Unverified>0); Assert.Null(result.HashPercent);
         } finally { Directory.Delete(link); }
+    }
+    [Fact] public async Task SourceWithExplicitWriteAndDeleteDenyAclStillCopiesReadOnly()
+    {
+        Seed(); var directory=new DirectoryInfo(Source); var original=directory.GetAccessControl(); var locked=directory.GetAccessControl();
+        var identity=WindowsIdentity.GetCurrent().User!;
+        locked.AddAccessRule(new FileSystemAccessRule(identity,FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Deny));
+        directory.SetAccessControl(locked);
+        try {
+            var before=Snapshot(); var acl=directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+            var result=await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+            AssertCompleted(result); AssertUnchanged(before); Assert.Equal(acl,directory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+        } finally { directory.SetAccessControl(original); }
+    }
+    [Fact] public async Task PathsLongerThanLegacyMaxPathAreCopiedAndVerified()
+    {
+        string relative=Path.Combine(new string('a',80),new string('b',80),new string('c',80));
+        string directory=Path.Combine(Source,relative); Directory.CreateDirectory(directory);
+        string file=Path.Combine(directory,"payload.txt"); Assert.True(file.Length>260); File.WriteAllText(file,"long path source");
+        var before=Snapshot(); var result=await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+        AssertCompleted(result); AssertUnchanged(before); Assert.Equal("long path source",File.ReadAllText(Path.Combine(Destination,relative,"payload.txt")));
     }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
