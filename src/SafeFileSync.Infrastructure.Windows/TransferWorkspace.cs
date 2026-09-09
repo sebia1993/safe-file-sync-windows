@@ -38,7 +38,7 @@ public sealed class TransferWorkspace : IDisposable
         var root = DirectoryLease.Acquire(Source); sourceIdentities.Add(root.Identities[^1]); pins.Add(root);
         foreach (var entry in entries) {
             token.ThrowIfCancellationRequested();
-            if (entry.Kind is EntryKind.Error or EntryKind.Excluded) throw new IOException("원본에 검사 불가 항목이 있습니다: " + entry.RelativePath);
+            if (entry.Kind is EntryKind.Error or EntryKind.Excluded) throw new IOException("원본에 검사 불가 항목이 있습니다: " + entry.RelativePath + " · " + entry.Detail);
             if (entry.Kind == EntryKind.Directory) {
                 var lease = DirectoryLease.Acquire(Combine(Source, entry.RelativePath)); pins.Add(lease); sourceIdentities.Add(lease.Identities[^1]);
                 if (entry.Identity != lease.Identities[^1]) throw new IOException("원본 폴더가 스캔 후 변경되었습니다.");
@@ -51,7 +51,7 @@ public sealed class TransferWorkspace : IDisposable
         foreach (var entry in entries) {
             token.ThrowIfCancellationRequested();
             if (entry.Kind is EntryKind.Error or EntryKind.Excluded || entry.Links > 1)
-                throw new IOException("목적지에 오류·링크 또는 하드링크가 있습니다: " + entry.RelativePath);
+                throw new IOException("목적지에 오류·링크 또는 하드링크가 있습니다: " + entry.RelativePath + " · " + entry.Detail);
             if (entry.Kind == EntryKind.Directory) CheckDestinationDirectory(Combine(Destination, entry.RelativePath));
         }
     }

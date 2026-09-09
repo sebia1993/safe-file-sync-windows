@@ -42,6 +42,7 @@ Windows 11에서 **원본을 읽기 전용으로 유지**하며 로컬 또는 SM
 
 ## 알려진 범위
 
+- 같은 Windows 세션에서는 앱을 하나만 실행하여 겹치는 작업을 방지합니다.
 - Windows x64용 설치 없는 폴더 배포이며 현재 실행 파일은 Authenticode 서명이 없습니다.
 - GitHub Windows 러너의 로컬/loopback SMB와 GUI 자동 검증은 실제 사내 네트워크·EDR/DLP·물리 단절·Windows 11 현장 검증을 대신하지 않습니다.
 - SMB 시스템 호출이 응답하지 않으면 중지 요청 반영에 시간이 걸릴 수 있습니다.

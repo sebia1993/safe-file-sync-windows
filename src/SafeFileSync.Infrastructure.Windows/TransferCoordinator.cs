@@ -168,7 +168,7 @@ public sealed class TransferCoordinator
             db.Set("report", report);
             return View(db, "source-after", "destination-after", sourceCheck, report);
         } catch (OperationCanceledException) { db.SetStatus("Cancelled"); throw; }
-        catch { db.SetStatus("Failed"); throw; }
+        catch (Exception ex) { db.Set("error",ex.Message); db.SetStatus("Failed"); throw; }
     }
     private static JobView View(JobStore db, string source, string destination, string sourceCheck, string? report)
     {
