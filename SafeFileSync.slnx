@@ -1,0 +1,1 @@
+<Solution><Project Path="src/SafeFileSync.Core/SafeFileSync.Core.csproj"/><Project Path="src/SafeFileSync.Infrastructure.Windows/SafeFileSync.Infrastructure.Windows.csproj"/><Project Path="src/SafeFileSync.App/SafeFileSync.App.csproj"/><Project Path="tests/SafeFileSync.Tests/SafeFileSync.Tests.csproj"/></Solution>

@@ -1,0 +1,24 @@
+name: Windows safety checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test SafeFileSync.slnx -c Release --logger "trx;LogFileName=safety.trx"
+      - run: dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true -o artifacts/app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-safety-prototype
+          path: artifacts/app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+

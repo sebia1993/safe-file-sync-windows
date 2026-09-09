@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF></PropertyGroup><ItemGroup><ProjectReference Include="../SafeFileSync.Infrastructure.Windows/SafeFileSync.Infrastructure.Windows.csproj"/></ItemGroup></Project>
