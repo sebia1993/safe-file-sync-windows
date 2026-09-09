@@ -48,6 +48,14 @@ public sealed class TransferTests : IDisposable
         using var lease = DirectoryLease.Acquire(Source);
         Assert.Throws<IOException>(() => Directory.Move(Source, Source + "-renamed"));
     }
+    [Fact] public void DirectoryLeaseAllowsChildRenameWhilePinningDirectoryItself()
+    {
+        File.WriteAllText(Path.Combine(Destination,"temporary"),"verified");
+        using var lease = DirectoryLease.Acquire(Destination);
+        File.Move(Path.Combine(Destination,"temporary"),Path.Combine(Destination,"final"));
+        Assert.Equal("verified",File.ReadAllText(Path.Combine(Destination,"final")));
+        Assert.Throws<IOException>(() => Directory.Move(Destination,Destination + "-renamed"));
+    }
     [Fact] public async Task CopyAndVerifyPreservesOriginalAndDestinationExtras()
     {
         Seed(); var before = Snapshot(); File.WriteAllText(Path.Combine(Destination,"extra.txt"),"keep");
