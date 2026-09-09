@@ -225,6 +225,12 @@ public sealed class TransferTests : IDisposable
         Assert.Equal("한글 name.txt",arguments[2]); Assert.Contains("/MT:8",arguments);
         Assert.DoesNotContain(arguments,a => new[]{"/MOV","/MOVE","/MIR","/PURGE"}.Contains(a));
     }
+    [Fact] public async Task RobocopyOutputPreservesKoreanAndLiteralShellCharacters()
+    {
+        string name="한글 & (space).txt"; string file=Path.Combine(Source,name); File.WriteAllText(file,"source data"); var before=Snapshot();
+        var result=await new RobocopyProcess().CopyFileAsync(file,Destination,null,default);
+        Assert.False(result.Failed,result.Output); Assert.Contains(name,result.Output); Assert.Equal("source data",File.ReadAllText(Path.Combine(Destination,name))); AssertUnchanged(before);
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);

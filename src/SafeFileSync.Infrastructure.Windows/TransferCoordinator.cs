@@ -79,6 +79,7 @@ public sealed class TransferCoordinator
                             var before = NativeFiles.Info(stream.SafeFileHandle);
                             if (before.Length != entry.Length || before.WriteTicks != entry.LastWriteUtcTicks || before.Identity != entry.Identity)
                                 throw new IOException("복사 전 원본 변경 감지");
+                            progress?.Report(new("원본 내용 확인",entry.RelativePath,done,totals.Files,bytes,totals.Bytes));
                             string hash = FolderScanner.Hash(stream, token);
                             if (entry.Hash is not null && entry.Hash != hash) throw new IOException("복사 전 원본 내용 변경 감지");
                             workspace.EnsureDestinationDirectory(batchParent);

@@ -3,7 +3,7 @@ namespace SafeFileSync.Infrastructure.Windows;
 public static class RobocopyArgumentBuilder
 {
     private static readonly string[] FolderOptions = ["/E", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/DCOPY:DAT", "/XJ"];
-    private static readonly string[] FileOptions = ["/MT:8", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS"];
+    private static readonly string[] FileOptions = ["/MT:8", "/Z", "/R:3", "/W:2", "/COPY:DAT", "/XJ", "/IS", "/IT", "/BYTES", "/NJH", "/NJS", "/UNICODE"];
     public static IReadOnlyList<string> BuildPreview(string source, string destination)
     {
         PathSafetyService.ValidatePair(source, destination);

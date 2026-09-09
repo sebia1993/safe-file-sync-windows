@@ -24,6 +24,16 @@ try {
  $deadline = [DateTime]::UtcNow.AddSeconds(30)
  do { $process.Refresh(); if ($process.HasExited) { throw 'App exited during UI startup.' }; if ($process.MainWindowHandle -ne 0) { break }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $deadline)
  if ($process.MainWindowHandle -eq 0) { throw 'No app window.' }
+ $second = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
+ try {
+  $end = [DateTime]::UtcNow.AddSeconds(20)
+  do { $second.Refresh(); if ($second.MainWindowHandle -ne 0) { break }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $end)
+  if ($second.MainWindowTitle -ne 'SafeFileSync') { throw 'Second instance was not blocked with the expected dialog.' }
+  $null = $second.CloseMainWindow()
+  if (-not $second.WaitForExit(10000)) { throw 'Second instance did not exit.' }
+  $process.Refresh(); if ($process.HasExited) { throw 'First instance unexpectedly exited.' }
+  Write-Output 'Per-session single-instance guard passed.'
+ } finally { if (-not $second.HasExited) { & taskkill /PID $second.Id /T /F | Out-Null } }
  $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
  function Find-Element([string]$name,[bool]$id=$false) {
   $property = [System.Windows.Automation.AutomationElement]::NameProperty

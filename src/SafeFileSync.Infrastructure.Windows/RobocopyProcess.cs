@@ -17,7 +17,7 @@ public sealed class RobocopyProcess
     {
         var arguments = RobocopyArgumentBuilder.BuildFiles(sourceFiles,stagingDirectory);
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "robocopy.exe")) {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.Unicode, StandardErrorEncoding = Encoding.Unicode
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = start };

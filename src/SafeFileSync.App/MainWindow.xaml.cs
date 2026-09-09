@@ -49,7 +49,9 @@ public partial class MainWindow : Window
             Progress.IsIndeterminate = p.TotalFiles == 0;
             Progress.Value = p.TotalFiles == 0 ? 0 : 100d * p.CompletedFiles / p.TotalFiles;
             double speed = elapsed.Elapsed.TotalSeconds > 0 ? p.CompletedBytes / elapsed.Elapsed.TotalSeconds : 0;
-            Summary.Text = $"처리 {p.CompletedFiles:N0}/{p.TotalFiles:N0} 파일 · {p.CompletedBytes / 1048576d:N1} MiB / {p.TotalBytes / 1048576d:N1} MiB · 전체 경과 기준 {speed / 1048576:N1} MiB/s · {elapsed.Elapsed:hh\\:mm\\:ss} 경과";
+            double remainingSeconds = p.TotalBytes > 0 && speed > 0 ? Math.Max(0,(p.TotalBytes-p.CompletedBytes)/speed) : double.NaN;
+            string eta = double.IsNaN(remainingSeconds) ? "계산 중" : remainingSeconds > 86400 ? $"{Math.Ceiling(remainingSeconds/86400):N0}일 이상" : TimeSpan.FromSeconds(remainingSeconds).ToString(@"hh\:mm\:ss");
+            Summary.Text = $"처리 {p.CompletedFiles:N0}/{p.TotalFiles:N0} 파일 · {p.CompletedBytes / 1048576d:N1} MiB / {p.TotalBytes / 1048576d:N1} MiB · 전체 경과 기준 {speed / 1048576:N1} MiB/s · {elapsed.Elapsed:hh\\:mm\\:ss} 경과 · 예상 남은 시간 {eta}";
         });
         try {
             var result = await Task.Run(() => coordinator.RunAsync(source, destination, mode, conflicts, copy, progress, cancellation.Token, id, failedOnly));
