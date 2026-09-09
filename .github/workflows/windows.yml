@@ -11,7 +11,7 @@ jobs:
       - uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet test SafeFileSync.slnx -c Release --logger "trx;LogFileName=safety.trx"
+      - run: dotnet test SafeFileSync.slnx -c Release --filter "Category!=Smb" --logger "trx;LogFileName=safety.trx"
       - run: dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true -o artifacts/app
       - name: WPF executable launch smoke
         run: ./scripts/Smoke-App.ps1 -Executable artifacts/app/SafeFileSync.App.exe
@@ -25,3 +25,36 @@ jobs:
           name: test-results
           path: '**/TestResults/*.trx'
 
+
+  smb:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Create isolated loopback SMB fixture
+        shell: pwsh
+        run: |
+          $name = 'SfsCI-' + [guid]::NewGuid().ToString('N')
+          $path = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Path $path | Out-Null
+          Start-Service LanmanServer
+          New-SmbShare -Name $name -Path $path -FullAccess "$env:COMPUTERNAME\$env:USERNAME" | Out-Null
+          "SFS_SMB_NAME=$name" >> $env:GITHUB_ENV
+          "SFS_SMB_LOCAL=$path" >> $env:GITHUB_ENV
+          "SFS_SMB_UNC=\\localhost\$name" >> $env:GITHUB_ENV
+      - name: Test local to SMB and SMB to local with alias guards
+        run: dotnet test tests/SafeFileSync.Tests -c Release --filter "Category=Smb" --logger "trx;LogFileName=smb.trx"
+      - name: Remove isolated SMB fixture
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:SFS_SMB_NAME) { Remove-SmbShare -Name $env:SFS_SMB_NAME -Force }
+          if ($env:SFS_SMB_LOCAL -and (Test-Path $env:SFS_SMB_LOCAL)) { Remove-Item $env:SFS_SMB_LOCAL -Recurse -Force }
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: smb-test-results
+          path: '**/TestResults/*.trx'
