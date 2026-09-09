@@ -266,6 +266,19 @@ public sealed class TransferTests : IDisposable
         var before=Snapshot(); var result=await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
         AssertCompleted(result); AssertUnchanged(before); Assert.Equal("long path source",File.ReadAllText(Path.Combine(Destination,relative,"payload.txt")));
     }
+    [Fact] public async Task ResumeDoesNotEraseEvidenceOfSourceChangesWhileStopped()
+    {
+        string file=Path.Combine(Source,"payload.txt"); File.WriteAllText(file,"original data");
+        using var cts=new CancellationTokenSource(); var coordinator=new TransferCoordinator(Storage);
+        var progress=new ImmediateProgress(p => { if (p.Phase == "임시 복사본 SHA-256 검증") cts.Cancel(); });
+        await Assert.ThrowsAsync<OperationCanceledException>(() => coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,progress,cts.Token));
+        var job=Assert.Single(coordinator.History()); File.WriteAllText(file,"externally changed during pause");
+        var result=await coordinator.RunAsync(Source,Destination,job.Mode,job.Conflicts,true,resumeId:job.Id);
+        Assert.Equal("NeedsAttention",result.Info.Status); Assert.DoesNotContain("PASS",result.SourceCheck);
+        Assert.Equal("externally changed during pause",File.ReadAllText(Path.Combine(Destination,"payload.txt")));
+        using var db=new JobStore(result.Info.DatabasePath,true);
+        Assert.NotEqual(db.Entries("source-original").Single().Hash,db.Entries("source-after").Single().Hash);
+    }
     private sealed class ImmediateProgress(Action<TransferProgress> callback) : IProgress<TransferProgress>
     {
         public void Report(TransferProgress value) => callback(value);

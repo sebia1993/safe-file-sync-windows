@@ -51,6 +51,15 @@ public sealed class JobStore : IDisposable
         }
         token.ThrowIfCancellationRequested(); tx.Commit(); Set("complete:" + name, "1"); progress?.Invoke(count, bytes);
     }
+    public void PreserveOriginalSnapshot(string from, string original)
+    {
+        RequireComplete(from);
+        if (Get("complete:" + original) == "1") return;
+        using var tx=connection.BeginTransaction();
+        using var cmd=connection.CreateCommand(); cmd.Transaction=tx;
+        cmd.CommandText="DELETE FROM entries WHERE snapshot=$original; INSERT INTO entries SELECT $original,k,json FROM entries WHERE snapshot=$from; INSERT INTO meta VALUES($key,'1') ON CONFLICT(k) DO UPDATE SET v='1';";
+        cmd.Parameters.AddWithValue("$original",original); cmd.Parameters.AddWithValue("$from",from); cmd.Parameters.AddWithValue("$key","complete:" + original); cmd.ExecuteNonQuery(); tx.Commit();
+    }
     public IEnumerable<ScanEntry> Entries(string snapshot)
     {
         RequireComplete(snapshot);

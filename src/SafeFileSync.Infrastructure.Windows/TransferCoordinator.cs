@@ -24,7 +24,7 @@ public sealed class TransferCoordinator
         using var db = new JobStore(databasePath);
         if (resumeId is not null) {
             var previous = db.Info;
-            if (previous.Source != workspace.Source || previous.Destination != workspace.Destination || previous.Mode != mode || previous.Conflicts != conflicts)
+            if (!previous.Source.Equals(workspace.Source,StringComparison.OrdinalIgnoreCase) || !previous.Destination.Equals(workspace.Destination,StringComparison.OrdinalIgnoreCase) || previous.Mode != mode || previous.Conflicts != conflicts)
                 throw new IOException("작업 재개 시 원본·목적지·검증·교체 정책을 변경할 수 없습니다.");
         }
         var retryPaths = failedOnly ? db.Outcomes().Where(o => o.Status is "Failed" or "Copying").Select(o => o.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
@@ -40,6 +40,7 @@ public sealed class TransferCoordinator
         }
         try {
             Scan("source-before", workspace.Source);
+            db.PreserveOriginalSnapshot("source-before","source-original");
             Scan("destination-before", workspace.Destination, true);
             if (!copy) { db.SetStatus("Compared"); return View(db, "source-before", "destination-before", "복사 전 비교", null); }
             db.SetStatus("Preflight");
@@ -158,11 +159,11 @@ public sealed class TransferCoordinator
             db.Set("transferPercent", (totals.Files == 0 ? 100d : 100d * done / totals.Files).ToString(System.Globalization.CultureInfo.InvariantCulture));
             db.SetStatus("Verifying");
             Scan("source-after", workspace.Source); Scan("destination-after", workspace.Destination, true);
-            var unchanged = db.Summary("source-before", "source-after", mode);
+            var unchanged = db.Summary("source-original", "source-after", mode);
             // Hash equality alone must not hide metadata or identity changes in the original snapshot.
-            bool changedMetadata = db.Compare("source-before", "source-after", mode).Any(d => d.Source is not null && d.Destination is not null &&
+            bool changedMetadata = db.Compare("source-original", "source-after", mode).Any(d => d.Source is not null && d.Destination is not null &&
                 (d.Source.LastWriteUtcTicks != d.Destination.LastWriteUtcTicks || d.Source.Identity != d.Destination.Identity));
-            sourceCheck = unchanged.TreesMatch && !changedMetadata ? "PASS (관찰한 파일·폴더 범위)" : "원본 변경 또는 검사 오류";
+            sourceCheck = unchanged.TreesMatch && !changedMetadata ? "PASS (최초 스캔 이후 관찰 범위)" : "원본 변경 또는 검사 오류";
             db.Set("sourceCheck", sourceCheck);
             var final = db.Summary("source-after", "destination-after", mode);
             db.SetStatus(failures == 0 && unchanged.TreesMatch && !changedMetadata && final.AllSourceEntriesMatch ? "Completed" : "NeedsAttention");
