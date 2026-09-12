@@ -6,6 +6,53 @@ namespace SafeFileSync.Tests;
 [Trait("Category","Smb")]
 public sealed class SmbTests
 {
+    [Fact] public async Task MultipleLocalSourcesKeepTheirOwnFoldersOnMappedSmbDrive()
+    {
+        string drive = Environment.GetEnvironmentVariable("SFS_SMB_DRIVE") ?? throw new InvalidOperationException("Mapped SMB fixture missing.");
+        string sharedLocal = Environment.GetEnvironmentVariable("SFS_SMB_LOCAL") ?? throw new InvalidOperationException("Local SMB fixture missing.");
+        string id = Guid.NewGuid().ToString("N");
+        string fixture = Path.Combine(Path.GetTempPath(), "SfsMultiSmb-" + id);
+        string first = Path.Combine(fixture, "first"), second = Path.Combine(fixture, "second"), storage = Path.Combine(fixture, "records");
+        string firstName = "A-" + id, secondName = "B-" + id;
+        string firstTarget = Path.Combine(drive, firstName), secondTarget = Path.Combine(drive, secondName);
+        string extra = Path.Combine(drive, "extra-" + id + ".txt");
+        string? staging = null;
+        foreach (string directory in new[] { first, second, storage }) Directory.CreateDirectory(directory);
+        try {
+            string firstFile = Path.Combine(first, "한글 same.txt"), secondFile = Path.Combine(second, "한글 same.txt");
+            File.WriteAllText(firstFile, "first local original");
+            File.WriteAllText(secondFile, "second local original");
+            Directory.CreateDirectory(Path.Combine(second, "empty"));
+            File.WriteAllText(extra, "preserved mapped-drive extra");
+            long firstTime = File.GetLastWriteTimeUtc(firstFile).Ticks, secondTime = File.GetLastWriteTimeUtc(secondFile).Ticks;
+            TransferSource[] overlapping = [new(first, firstName), new(sharedLocal, secondName)];
+            await Assert.ThrowsAsync<IOException>(() => new TransferCoordinator(storage).RunAsync(overlapping, drive, VerificationMode.Sha256, ConflictPolicy.Preserve, true));
+            Assert.False(Directory.Exists(Path.Combine(storage, "SafeFileSync")));
+            Assert.False(Directory.Exists(firstTarget));
+            Assert.False(Directory.Exists(secondTarget));
+            TransferSource[] sources = [new(first, firstName), new(second, secondName)];
+            var result = await new TransferCoordinator(storage).RunAsync(sources, drive, VerificationMode.Sha256, ConflictPolicy.Preserve, true);
+            staging = Path.Combine(drive, ".safefilesync-" + result.Info.Id);
+            using var db = new JobStore(result.Info.DatabasePath, true);
+            Assert.True(result.Info.Status == "Completed", result.SourceCheck + " | " + string.Join("; ", db.Outcomes().Select(o => o.Path + ": " + o.Detail)));
+            Assert.Equal("first local original", File.ReadAllText(Path.Combine(firstTarget, "한글 same.txt")));
+            Assert.Equal("second local original", File.ReadAllText(Path.Combine(secondTarget, "한글 same.txt")));
+            Assert.True(Directory.Exists(Path.Combine(secondTarget, "empty")));
+            Assert.Equal("preserved mapped-drive extra", File.ReadAllText(extra));
+            Assert.Equal("first local original", File.ReadAllText(firstFile));
+            Assert.Equal("second local original", File.ReadAllText(secondFile));
+            Assert.Equal(firstTime, File.GetLastWriteTimeUtc(firstFile).Ticks);
+            Assert.Equal(secondTime, File.GetLastWriteTimeUtc(secondFile).Ticks);
+            Assert.True(result.Summary.AllSourceEntriesMatch);
+            Assert.Equal(100d, result.HashPercent);
+            Assert.Equal(sources, result.Info.Sources);
+        } finally {
+            foreach (string path in new[] { firstTarget, secondTarget }) if (Directory.Exists(path)) Directory.Delete(path, true);
+            if (staging is not null && Directory.Exists(staging)) Directory.Delete(staging, true);
+            if (File.Exists(extra)) File.Delete(extra);
+            if (Directory.Exists(fixture)) Directory.Delete(fixture, true);
+        }
+    }
     [Fact] public async Task UserProfileToMappedDriveRootUsesExternalRecords()
     {
         string drive = Environment.GetEnvironmentVariable("SFS_SMB_DRIVE") ?? throw new InvalidOperationException("Mapped SMB fixture missing.");

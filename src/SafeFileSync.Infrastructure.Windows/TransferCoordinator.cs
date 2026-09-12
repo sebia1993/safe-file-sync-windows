@@ -7,13 +7,23 @@ public sealed class TransferCoordinator
 {
     private readonly string storageParent;
     public TransferCoordinator(string? storageParent = null) => this.storageParent = storageParent ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    public async Task<JobView> RunAsync(string source, string destination, VerificationMode mode, ConflictPolicy conflicts,
+    public Task<JobView> RunAsync(string source, string destination, VerificationMode mode, ConflictPolicy conflicts,
         bool copy, IProgress<TransferProgress>? progress = null, CancellationToken token = default, string? resumeId = null, bool failedOnly = false)
+        => RunCoreAsync([new TransferSource(source, "")],destination,mode,conflicts,copy,false,progress,token,resumeId,failedOnly);
+    public Task<JobView> RunAsync(IReadOnlyList<TransferSource> sources, string destination, VerificationMode mode, ConflictPolicy conflicts,
+        bool copy, IProgress<TransferProgress>? progress = null, CancellationToken token = default, string? resumeId = null, bool failedOnly = false)
+        => RunCoreAsync(sources.ToArray(),destination,mode,conflicts,copy,true,progress,token,resumeId,failedOnly);
+    private async Task<JobView> RunCoreAsync(IReadOnlyList<TransferSource> sources, string destination, VerificationMode mode, ConflictPolicy conflicts,
+        bool copy, bool named, IProgress<TransferProgress>? progress, CancellationToken token, string? resumeId, bool failedOnly)
     {
         if (failedOnly && resumeId is null) throw new ArgumentException("실패 항목 재시도는 기존 작업에서만 가능합니다.");
         if (!Enum.IsDefined(mode) || !Enum.IsDefined(conflicts)) throw new ArgumentException("지원하지 않는 작업 옵션");
         var id = resumeId is null ? Guid.NewGuid().ToString("N") : Guid.ParseExact(resumeId, "N").ToString("N");
-        using var workspace = new TransferWorkspace(source, destination, storageParent);
+        // Read saved mapping before any workspace/storage creation, including when resume input was changed.
+        JobInfo? previous = resumeId is null ? null : ReadJob(id);
+        if (previous is not null && (previous.Mode != mode || previous.Conflicts != conflicts))
+            throw new IOException("작업 재개 시 검증·교체 정책을 변경할 수 없습니다.");
+        using var workspace = new TransferWorkspace(sources, destination, storageParent, named, previous);
         string databasePath = Path.Combine(workspace.StorageRoot, id + ".sqlite");
         if (resumeId is null) {
             using var fresh = new FileStream(databasePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
@@ -23,19 +33,19 @@ public sealed class TransferCoordinator
         }
         using var db = new JobStore(databasePath);
         if (resumeId is not null) {
-            var previous = db.Info;
-            if (!previous.Source.Equals(workspace.Source,StringComparison.OrdinalIgnoreCase) || !previous.Destination.Equals(workspace.Destination,StringComparison.OrdinalIgnoreCase) || previous.Mode != mode || previous.Conflicts != conflicts)
+            var saved = db.Info;
+            if (saved.Id != id || !TransferWorkspace.SameSources(saved,workspace.Source,workspace.Sources) || !saved.Destination.Equals(workspace.Destination,StringComparison.OrdinalIgnoreCase) || saved.Mode != mode || saved.Conflicts != conflicts)
                 throw new IOException("작업 재개 시 원본·목적지·검증·교체 정책을 변경할 수 없습니다.");
         }
         var retryPaths = failedOnly ? db.Outcomes().Where(o => o.Status is "Failed" or "Copying").Select(o => o.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
-        db.Initialize(new(id, workspace.Source, workspace.Destination, mode, conflicts, "Scanning", databasePath, DateTime.UtcNow.ToString("O")));
+        db.Initialize(new(id, workspace.Source, workspace.Destination, mode, conflicts, "Scanning", databasePath, DateTime.UtcNow.ToString("O"), workspace.Sources));
         var scanner = new FolderScanner();
         string stageRelative = ".safefilesync-" + id;
         string sourceCheck = "검사 전";
         void Scan(string name, string root, bool destinationScan = false) {
             progress?.Report(new("스캔: " + name, root));
             // Only the exact staging directory owned by this job is excluded from destination comparison.
-            var entries = scanner.Scan(root, mode, token, destinationScan ? stageRelative : null);
+            var entries = destinationScan ? scanner.Scan(root,mode,token,stageRelative) : workspace.ScanSources(scanner,mode,token);
             db.SaveSnapshot(name, entries, token, (n,b) => progress?.Report(new("스캔: " + name, root, n, CompletedBytes: b)));
         }
         try {
@@ -75,7 +85,7 @@ public sealed class TransferCoordinator
                         FileStream? stream = null;
                         try {
                             token.ThrowIfCancellationRequested();
-                            string sourceFile = TransferWorkspace.Combine(workspace.Source, entry.RelativePath);
+                            string sourceFile = workspace.PathForSource(entry.RelativePath);
                             stream = NativeFiles.OpenRead(sourceFile);
                             var before = NativeFiles.Info(stream.SafeFileHandle);
                             if (before.Length != entry.Length || before.WriteTicks != entry.LastWriteUtcTicks || before.Identity != entry.Identity)
@@ -108,7 +118,7 @@ public sealed class TransferCoordinator
                     var required = prepared.Where(p => p.NeedsCopy).ToArray();
                     CopyResult result = new(0, "검증된 임시 복사본 재사용");
                     if (required.Length > 0) {
-                        result = await engine.CopyFilesAsync(required.Select(p => TransferWorkspace.Combine(workspace.Source,p.Entry.RelativePath)).ToArray(), Path.GetDirectoryName(required[0].Stage)!,
+                        result = await engine.CopyFilesAsync(required.Select(p => workspace.PathForSource(p.Entry.RelativePath)).ToArray(), Path.GetDirectoryName(required[0].Stage)!,
                             percent => progress?.Report(new("복사", batchParent + $" ({required.Length}개 묶음)", done, totals.Files, bytes, totals.Bytes, $"현재 Robocopy 파일 {percent:F1}%")), token, workspace.StorageRoot);
                     }
                     foreach (var item in prepared) {
@@ -184,6 +194,18 @@ public sealed class TransferCoordinator
         var rows = db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified))
             .Concat(db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is DifferenceKind.QuickMatch or DifferenceKind.Verified)).Take(1000).ToArray();
         return new(db.Info,db.Summary(source,destination,db.Info.Mode),rows,sourceCheck,report,transfer,hashPercent);
+    }
+    private JobInfo ReadJob(string id)
+    {
+        using var parent = DirectoryLease.Acquire(storageParent);
+        using var folder = DirectoryLease.Acquire(Path.Combine(parent.FinalPath,"SafeFileSync"));
+        string path = Path.Combine(folder.FinalPath,id + ".sqlite");
+        using var file = NativeFiles.OpenRead(path);
+        if (NativeFiles.Info(file.SafeFileHandle).Links != 1) throw new IOException("작업 DB 하드링크 차단");
+        using var db = new JobStore(path,true);
+        var info = db.Info;
+        if (info.Id != id) throw new IOException("선택한 작업과 저장된 작업 ID가 다릅니다.");
+        return info;
     }
     public IReadOnlyList<JobInfo> History()
     {

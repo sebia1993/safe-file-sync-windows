@@ -13,13 +13,15 @@ public static class SfsWindowCapture {
 }
 '@
 $fixture = Join-Path $env:RUNNER_TEMP ('SfsUI-' + [guid]::NewGuid().ToString('N'))
-$src = Join-Path $fixture 'source'
+$src = Join-Path (Join-Path $fixture 'first') 'source'
+$srcB = Join-Path (Join-Path $fixture 'second') 'source'
 $dst = Join-Path $fixture 'destination'
-$insideRecords = Join-Path $src 'AppData/Local'
+$insideRecords = Join-Path $srcB 'AppData/Local'
 $records = Join-Path $fixture 'records'
 $emptyRecords = Join-Path $fixture 'empty-records'
-New-Item -ItemType Directory -Path $src,$dst,$insideRecords,$records,$emptyRecords | Out-Null
-[IO.File]::WriteAllText((Join-Path $src 'example.txt'),'UI transfer source')
+New-Item -ItemType Directory -Path $src,$srcB,$dst,$insideRecords,$records,$emptyRecords | Out-Null
+[IO.File]::WriteAllText((Join-Path $src 'example.txt'),'UI transfer source A')
+[IO.File]::WriteAllText((Join-Path $srcB 'example.txt'),'UI transfer source B')
 New-Item -ItemType Directory -Path (Join-Path $src 'nested') | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'nested/child.txt'),'nested source')
 $process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
@@ -42,36 +44,54 @@ try {
   $property = [System.Windows.Automation.AutomationElement]::NameProperty
   if ($id) { $property = [System.Windows.Automation.AutomationElement]::AutomationIdProperty }
   $condition = New-Object System.Windows.Automation.PropertyCondition($property,$name)
-  $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
-  if ($null -eq $element) { throw "UI element not found: $name" }; return $element
+  $end = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+   $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+   if ($null -ne $element) { return $element }; Start-Sleep -Milliseconds 100
+  } while ([DateTime]::UtcNow -lt $end)
+  throw "UI element not found: $name"
  }
- foreach ($pair in @(@('원본 폴더 경로',$src),@('목적지 폴더 경로',$dst),@('작업 기록 기준 폴더',$insideRecords))) {
-  $element = Find-Element $pair[0]
-  $pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-  $pattern.SetValue($pair[1])
- }
- function Invoke-Button([string]$name) { $element = Find-Element $name; $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+ function Invoke-Button([string]$name,[bool]$id=$false) { $element = Find-Element $name $id; $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+ function Set-Value([string]$name,[string]$value,[bool]$id=$false) { (Find-Element $name $id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
+ function Read-Value([string]$name) { return (Find-Element $name $true).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }
  function Wait-Status([string]$expected) {
   $started = [DateTime]::UtcNow
   $end = $started.AddSeconds(40)
   do {
    $status = (Find-Element 'JobStatus' $true).Current.Name
-   if ($status.Contains($expected) -and (Find-Element '복사 시작').Current.IsEnabled) { return }
+   if ($status.Contains($expected) -and (Find-Element '복사 시작').Current.IsEnabled -and [DateTime]::UtcNow -gt $started.AddMilliseconds(500)) { return }
    if (-not $status.Contains($expected) -and $status.Contains('완료하지 못') -and (Find-Element '복사 시작').Current.IsEnabled -and [DateTime]::UtcNow -gt $started.AddSeconds(1)) { throw $status }
    Start-Sleep -Milliseconds 200
   } while ([DateTime]::UtcNow -lt $end)
   throw "UI did not reach '$expected': $status"
  }
+ Invoke-Button 'RemoveSource_1' $true
+ Invoke-Button '복사 시작'; Wait-Status '원본 폴더를 1개 이상'
+ Invoke-Button 'AddSource' $true
+ Set-Value 'SourcePath_1' $src $true
+ Invoke-Button 'AddSource' $true
+ Set-Value 'SourcePath_2' $srcB $true
+ if ((Read-Value 'SourceName_1') -ne 'source' -or (Read-Value 'SourceName_2') -ne 'source') { throw 'Source folder names were not suggested from their paths.' }
+ Set-Value 'SourceName_1' 'A' $true
+ Set-Value 'SourceName_2' 'B' $true
+ Set-Value '목적지 폴더 경로' $dst
+ Set-Value '작업 기록 기준 폴더' $insideRecords
+ foreach ($pair in @(@('SourceMapping_1',(Join-Path $dst 'A')),@('SourceMapping_2',(Join-Path $dst 'B')))) {
+  if (-not (Find-Element $pair[0] $true).Current.Name.Contains($pair[1])) { throw 'Destination mapping preview does not match configured folder name.' }
+ }
  Invoke-Button '복사 시작'; Wait-Status '기록 위치를'
- if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Unsafe records were created within source.' }
- if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Rejected job unexpectedly copied a file.' }
+ if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Unsafe records were created within second source.' }
+ if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Rejected job unexpectedly created a destination folder.' }
  $storageElement = Find-Element '작업 기록 기준 폴더'
  $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($records)
  Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
- if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Compare unexpectedly copied source.' }
+ if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Compare unexpectedly created a destination folder.' }
  Invoke-Button '복사 시작'; Wait-Status '작업: 완료'
- if ([IO.File]::ReadAllText((Join-Path $dst 'example.txt')) -ne 'UI transfer source') { throw 'UI copy content differs.' }
- if ([IO.File]::ReadAllText((Join-Path $src 'example.txt')) -ne 'UI transfer source') { throw 'UI modified source.' }
+ if ([IO.File]::ReadAllText((Join-Path $dst 'A/example.txt')) -ne 'UI transfer source A') { throw 'First source did not copy to its own destination folder.' }
+ if ([IO.File]::ReadAllText((Join-Path $dst 'B/example.txt')) -ne 'UI transfer source B') { throw 'Second source did not copy to its own destination folder.' }
+ if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Multi-source copy unexpectedly used legacy direct placement.' }
+ if ([IO.File]::ReadAllText((Join-Path $src 'example.txt')) -ne 'UI transfer source A' -or [IO.File]::ReadAllText((Join-Path $srcB 'example.txt')) -ne 'UI transfer source B') { throw 'UI modified a source.' }
+ if ((Find-Element 'SourceCount' $true).Current.Name -ne '원본 폴더 2개') { throw 'Source count is incorrect.' }
  $summary = (Find-Element 'JobSummary' $true).Current.Name
  if (-not $summary.Contains('전체 검증 미실시')) { throw "Quick verification mislabeled: $summary" }
  $recordRoot = Join-Path $records 'SafeFileSync'
@@ -80,16 +100,20 @@ try {
  foreach ($choice in @($emptyRecords,$records)) {
   $storageElement.SetFocus()
   $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($choice)
-  (Find-Element '원본 폴더 경로').SetFocus()
+  (Find-Element 'SourcePath_1' $true).SetFocus()
   Start-Sleep -Milliseconds 200
   $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
   if ($choice -eq $emptyRecords -and $selection.Length -ne 0) { throw 'Old history survived records change.' }
   if ($choice -eq $records -and $selection.Length -ne 1) { throw 'History was not restored from selected records.' }
  }
+ Set-Value 'SourceName_1' 'Changed-A' $true
+ Invoke-Button 'RemoveSource_2' $true
  Invoke-Button '선택 작업 재개 / 재검사·재시도'; Wait-Status '작업: 완료'
+ if ((Read-Value 'SourcePath_1') -ne $src -or (Read-Value 'SourcePath_2') -ne $srcB -or (Read-Value 'SourceName_1') -ne 'A' -or (Read-Value 'SourceName_2') -ne 'B') { throw 'Resume did not restore every persisted source path and folder name.' }
+ if (Test-Path (Join-Path $dst 'Changed-A')) { throw 'Resume used an edited folder name instead of the saved mapping.' }
  if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Resume created a different job.' }
- if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Records were written within source.' }
- Write-Output "WPF storage rejection, selection, history, resume and copy passed. $summary"
+ if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Records were written within a source.' }
+ Write-Output "WPF multiple sources, aliases, separate same-named files, storage rejection, history restoration and resume passed. $summary"
  Start-Sleep -Milliseconds 300
  function Capture-Window([string]$name) {
  $rect = New-Object SfsWindowCapture+RECT
@@ -107,6 +131,12 @@ try {
  $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
  foreach ($treeName in @('원본 폴더 내용','목적지 폴더 내용')) {
   $tree = Find-Element $treeName
+  foreach ($sourceName in @('A','B')) {
+   $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,$sourceName)
+   $sourceFolder = $tree.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+   if ($null -eq $sourceFolder) { throw "Source mapping $sourceName missing in $treeName" }
+   $sourceFolder.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+  }
   $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'nested')
   $folder = $tree.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
   if ($null -eq $folder) { throw "Nested folder missing in $treeName" }
@@ -114,7 +144,7 @@ try {
   $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'child.txt')
   if ($null -eq $folder.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)) { throw "Child item missing in $treeName" }
  }
- if ([IO.File]::ReadAllText((Join-Path $dst 'nested/child.txt')) -ne 'nested source') { throw 'Nested UI copy content differs.' }
+ if ([IO.File]::ReadAllText((Join-Path $dst 'A/nested/child.txt')) -ne 'nested source') { throw 'Nested UI copy content differs.' }
  Start-Sleep -Milliseconds 300
  Capture-Window 'wpf-folders.png'
  Write-Output 'Both source and destination folder trees passed UI inspection.'
