@@ -39,7 +39,7 @@
      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0"><TextBlock Text="오류 코드" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBlock x:Name="SupportCode" AutomationProperties.AutomationId="SupportCode" FontSize="20" FontWeight="Bold" Foreground="#824A00"/></StackPanel>
      <TextBlock Grid.Column="1" x:Name="SupportDescription" AutomationProperties.AutomationId="SupportDescription" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap"/>
      <Button Grid.Column="2" x:Name="CopySupportCodeButton" AutomationProperties.AutomationId="CopySupportCode" Content="코드만 복사" Click="CopySupportCode" IsEnabled="False" Padding="12,5" Margin="10,0,0,0"/>
-     <TextBlock Grid.Row="1" Grid.ColumnSpan="3" x:Name="SupportHint" Text="코드만 전달하세요. 복사 내용에는 경로·파일명·로그가 포함되지 않습니다." Foreground="#654E2A" Margin="0,4,0,0" TextWrapping="Wrap"/>
+     <TextBlock Grid.Row="1" Grid.ColumnSpan="3" x:Name="SupportHint" AutomationProperties.AutomationId="SupportHint" Text="코드만 전달하세요. 복사 내용에는 경로·파일명·로그가 포함되지 않습니다." Foreground="#654E2A" Margin="0,4,0,0" TextWrapping="Wrap"/>
     </Grid>
    </Border>
    <TextBlock x:Name="Status" AutomationProperties.AutomationId="JobStatus" MaxHeight="90" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="기존 폴더를 선택하거나 UNC 경로를 입력하세요. 현재 Windows 로그인 권한을 사용합니다." TextWrapping="Wrap"/><ProgressBar x:Name="Progress" Height="8" Margin="0,8,0,8"/><TextBlock x:Name="Summary" AutomationProperties.AutomationId="JobSummary" Text="복사 진행률과 검증 결과는 별도로 표시합니다." TextWrapping="Wrap" Margin="0,0,0,12"/></StackPanel>

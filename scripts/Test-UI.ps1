@@ -77,14 +77,30 @@ try {
   $copyElement = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
   if ($null -ne $copyElement -and $copyElement.Current.IsEnabled) { throw 'Code copy remained enabled without an active code.' }
  }
+ function Invoke-ClipboardAccess([scriptblock]$operation) {
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  while ($true) {
+   try { return (& $operation) }
+   catch [System.Runtime.InteropServices.ExternalException] {
+    if ([DateTime]::UtcNow -ge $deadline) { throw }
+    Start-Sleep -Milliseconds 100
+   }
+  }
+ }
  function Assert-CodeClipboard([string]$expected) {
-  Set-Clipboard -Value 'Sfs UI clipboard sentinel'
+  Invoke-ClipboardAccess { Set-Clipboard -Value 'Sfs UI clipboard sentinel' }
   Invoke-Button 'CopySupportCode' $true
+  # InvokePattern returns before the app's clipboard write completes. Wait for its result first.
   $end = [DateTime]::UtcNow.AddSeconds(5)
+  $completed = $false
   do {
-   $copied = Get-Clipboard -Raw
-   if ($copied -ceq $expected) { break }; Start-Sleep -Milliseconds 100
+   $hint = (Find-Element 'SupportHint' $true).Current.Name
+   if ($hint.Contains('복사하지 못했습니다')) { throw 'The app reported that copying its support code failed.' }
+   if ($hint.Contains('코드만 복사했습니다')) { $completed = $true; break }
+   Start-Sleep -Milliseconds 100
   } while ([DateTime]::UtcNow -lt $end)
+  if (-not $completed) { throw 'The app did not report completion of its code-only clipboard write.' }
+  $copied = Invoke-ClipboardAccess { Get-Clipboard -Raw }
   if ($copied -cne $expected -or $copied -cnotmatch '^S(?:0[1-9]|1[0-6]|99)$') { throw 'Clipboard did not contain exactly the expected fixed support code.' }
   foreach ($privateValue in @($src,$srcB,$dst,$records,'example.txt','UI transfer source')) {
    if ($copied.Contains($privateValue)) { throw 'Clipboard included fixture data instead of a code only.' }
