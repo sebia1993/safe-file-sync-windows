@@ -15,7 +15,10 @@ public static class SfsWindowCapture {
 $fixture = Join-Path $env:RUNNER_TEMP ('SfsUI-' + [guid]::NewGuid().ToString('N'))
 $src = Join-Path $fixture 'source'
 $dst = Join-Path $fixture 'destination'
-New-Item -ItemType Directory -Path $src,$dst | Out-Null
+$insideRecords = Join-Path $src 'AppData/Local'
+$records = Join-Path $fixture 'records'
+$emptyRecords = Join-Path $fixture 'empty-records'
+New-Item -ItemType Directory -Path $src,$dst,$insideRecords,$records,$emptyRecords | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'example.txt'),'UI transfer source')
 New-Item -ItemType Directory -Path (Join-Path $src 'nested') | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'nested/child.txt'),'nested source')
@@ -42,22 +45,28 @@ try {
   $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
   if ($null -eq $element) { throw "UI element not found: $name" }; return $element
  }
- foreach ($pair in @(@('원본 폴더 경로',$src),@('목적지 폴더 경로',$dst))) {
+ foreach ($pair in @(@('원본 폴더 경로',$src),@('목적지 폴더 경로',$dst),@('작업 기록 기준 폴더',$insideRecords))) {
   $element = Find-Element $pair[0]
   $pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   $pattern.SetValue($pair[1])
  }
  function Invoke-Button([string]$name) { $element = Find-Element $name; $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
  function Wait-Status([string]$expected) {
-  $end = [DateTime]::UtcNow.AddSeconds(40)
+  $started = [DateTime]::UtcNow
+  $end = $started.AddSeconds(40)
   do {
    $status = (Find-Element 'JobStatus' $true).Current.Name
    if ($status.Contains($expected) -and (Find-Element '복사 시작').Current.IsEnabled) { return }
-   if ($status.Contains('완료하지 못')) { throw $status }
+   if (-not $status.Contains($expected) -and $status.Contains('완료하지 못') -and (Find-Element '복사 시작').Current.IsEnabled -and [DateTime]::UtcNow -gt $started.AddSeconds(1)) { throw $status }
    Start-Sleep -Milliseconds 200
   } while ([DateTime]::UtcNow -lt $end)
   throw "UI did not reach '$expected': $status"
  }
+ Invoke-Button '복사 시작'; Wait-Status '기록 위치를'
+ if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Unsafe records were created within source.' }
+ if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Rejected job unexpectedly copied a file.' }
+ $storageElement = Find-Element '작업 기록 기준 폴더'
+ $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($records)
  Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
  if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Compare unexpectedly copied source.' }
  Invoke-Button '복사 시작'; Wait-Status '작업: 완료'
@@ -65,7 +74,22 @@ try {
  if ([IO.File]::ReadAllText((Join-Path $src 'example.txt')) -ne 'UI transfer source') { throw 'UI modified source.' }
  $summary = (Find-Element 'JobSummary' $true).Current.Name
  if (-not $summary.Contains('전체 검증 미실시')) { throw "Quick verification mislabeled: $summary" }
- Write-Output "WPF UI compare/copy flow passed. $summary"
+ $recordRoot = Join-Path $records 'SafeFileSync'
+ if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Comparison and copy jobs are not in selected records.' }
+ if (@(Get-ChildItem $recordRoot -Filter '*.html').Count -ne 1) { throw 'Report is not in selected records.' }
+ foreach ($choice in @($emptyRecords,$records)) {
+  $storageElement.SetFocus()
+  $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($choice)
+  (Find-Element '원본 폴더 경로').SetFocus()
+  Start-Sleep -Milliseconds 200
+  $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+  if ($choice -eq $emptyRecords -and $selection.Length -ne 0) { throw 'Old history survived records change.' }
+  if ($choice -eq $records -and $selection.Length -ne 1) { throw 'History was not restored from selected records.' }
+ }
+ Invoke-Button '선택 작업 재개 / 재검사·재시도'; Wait-Status '작업: 완료'
+ if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Resume created a different job.' }
+ if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Records were written within source.' }
+ Write-Output "WPF storage rejection, selection, history, resume and copy passed. $summary"
  Start-Sleep -Milliseconds 300
  function Capture-Window([string]$name) {
  $rect = New-Object SfsWindowCapture+RECT

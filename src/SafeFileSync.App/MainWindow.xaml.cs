@@ -8,14 +8,22 @@ using SafeFileSync.Infrastructure.Windows;
 namespace SafeFileSync.App;
 public partial class MainWindow : Window
 {
-    private readonly TransferCoordinator coordinator = new();
+    private TransferCoordinator coordinator = new();
     private CancellationTokenSource? cancellation;
     private string? report;
     private bool closeWhenStopped;
     private readonly Stopwatch elapsed = new();
-    public MainWindow() { InitializeComponent(); RefreshHistory(); Closing += OnClosing; }
+    public MainWindow() { InitializeComponent(); StoragePath.Text = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); RefreshHistory(); Closing += OnClosing; }
     private void BrowseSource(object sender, RoutedEventArgs e) => Browse(SourcePath);
     private void BrowseDestination(object sender, RoutedEventArgs e) => Browse(DestinationPath);
+    private void BrowseStorage(object sender, RoutedEventArgs e) { Browse(StoragePath); RefreshHistory(); }
+    private void StorageChanged(object sender, TextChangedEventArgs e)
+    {
+        if (History is null) return;
+        coordinator = new TransferCoordinator(StoragePath.Text);
+        History.ItemsSource = null; report = null; ReportButton.IsEnabled = false;
+    }
+    private void StorageFocusLost(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e) => RefreshHistory();
     private void Browse(TextBox box) { var dialog = new OpenFolderDialog { Title = "기존 폴더 선택" }; if (dialog.ShowDialog(this) == true) box.Text = dialog.FolderName; }
     private async void Compare(object sender, RoutedEventArgs e) => await Run(false);
     private async void Copy(object sender, RoutedEventArgs e) => await Run(true);

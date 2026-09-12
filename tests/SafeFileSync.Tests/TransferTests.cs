@@ -28,6 +28,28 @@ public sealed class TransferTests : IDisposable
         var after = Snapshot(); Assert.Equal(before.Count, after.Count);
         foreach (var item in before) Assert.Equal(item.Value, after[item.Key]);
     }
+    [Fact] public async Task UserProfileCopyCanUseExternalRecordsAndResumeFromThem()
+    {
+        Seed(); string appData = Path.Combine(Source,"AppData","Local"); Directory.CreateDirectory(appData);
+        var before = Snapshot();
+        var error = await Assert.ThrowsAsync<IOException>(() => new TransferCoordinator(appData).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true));
+        Assert.Contains("기록 위치를",error.Message); Assert.False(Directory.Exists(Path.Combine(appData,"SafeFileSync")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Destination)); AssertUnchanged(before);
+        var coordinator = new TransferCoordinator(Storage);
+        var result = await coordinator.RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+        AssertCompleted(result); AssertUnchanged(before); Assert.Single(coordinator.History());
+        Assert.True(PathSafetyService.IsWithin(result.Info.DatabasePath,Storage)); Assert.True(PathSafetyService.IsWithin(result.ReportPath!,Storage));
+        Assert.NotEmpty(Directory.GetFiles(Path.Combine(Storage,"SafeFileSync"),"*.log"));
+        var resumed = await new TransferCoordinator(Storage).RunAsync(Source,Destination,VerificationMode.Sha256,ConflictPolicy.Preserve,true,resumeId:result.Info.Id);
+        AssertCompleted(resumed); AssertUnchanged(before); Assert.Equal(result.Info.DatabasePath,resumed.Info.DatabasePath);
+        Assert.Empty(new TransferCoordinator(appData).History());
+    }
+    [Fact] public void DestinationContainingRecordFolderRemainsBlockedBeforeCreation()
+    {
+        string inside = Path.Combine(Destination,"records"); Directory.CreateDirectory(inside);
+        Assert.Throws<IOException>(() => new TransferWorkspace(Source,Destination,inside));
+        Assert.False(Directory.Exists(Path.Combine(inside,"SafeFileSync")));
+    }
     [Fact] public void ScannerIncludesEmptyDirectoriesAndSha256()
     {
         Seed(); var before = Snapshot();
