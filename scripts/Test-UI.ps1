@@ -52,11 +52,12 @@ try {
  }
  function Invoke-Button([string]$name) { $element = Find-Element $name; $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
  function Wait-Status([string]$expected) {
-  $end = [DateTime]::UtcNow.AddSeconds(40)
+  $started = [DateTime]::UtcNow
+  $end = $started.AddSeconds(40)
   do {
    $status = (Find-Element 'JobStatus' $true).Current.Name
    if ($status.Contains($expected) -and (Find-Element '복사 시작').Current.IsEnabled) { return }
-   if ($status.Contains('완료하지 못')) { throw $status }
+   if (-not $status.Contains($expected) -and $status.Contains('완료하지 못') -and (Find-Element '복사 시작').Current.IsEnabled -and [DateTime]::UtcNow -gt $started.AddSeconds(1)) { throw $status }
    Start-Sleep -Milliseconds 200
   } while ([DateTime]::UtcNow -lt $end)
   throw "UI did not reach '$expected': $status"
