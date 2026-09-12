@@ -82,7 +82,7 @@ try {
   $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($choice)
   (Find-Element '원본 폴더 경로').SetFocus()
   Start-Sleep -Milliseconds 200
-  $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()
+  $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
   if ($choice -eq $emptyRecords -and $selection.Length -ne 0) { throw 'Old history survived records change.' }
   if ($choice -eq $records -and $selection.Length -ne 1) { throw 'History was not restored from selected records.' }
  }
