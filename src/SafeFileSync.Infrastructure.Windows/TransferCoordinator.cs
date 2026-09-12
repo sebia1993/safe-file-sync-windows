@@ -6,7 +6,7 @@ public sealed record JobView(JobInfo Info, ComparisonSummary Summary, IReadOnlyL
 public sealed class TransferCoordinator
 {
     private readonly string storageParent;
-    public TransferCoordinator(string? storageParent = null) => this.storageParent = storageParent ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    public TransferCoordinator(string? storageParent = null) => this.storageParent = storageParent ?? RecordStorageLocation.DefaultParent;
     public Task<JobView> RunAsync(string source, string destination, VerificationMode mode, ConflictPolicy conflicts,
         bool copy, IProgress<TransferProgress>? progress = null, CancellationToken token = default, string? resumeId = null, bool failedOnly = false)
         => RunCoreAsync([new TransferSource(source, "")],destination,mode,conflicts,copy,false,progress,token,resumeId,failedOnly);
@@ -226,6 +226,7 @@ public sealed class TransferCoordinator
     {
         using var parent = DirectoryLease.Acquire(storageParent);
         using var folder = DirectoryLease.Acquire(Path.Combine(parent.FinalPath,"SafeFileSync"));
+        if (RecordStorageLocation.IsDefaultParent(parent.FinalPath)) RecordStorageLocation.ValidatePrivateDirectory(folder.FinalPath);
         string path = Path.Combine(folder.FinalPath,id + ".sqlite");
         using var file = NativeFiles.OpenRead(path);
         if (NativeFiles.Info(file.SafeFileHandle).Links != 1) throw DiagnosticCodes.Tag(new IOException("작업 DB 하드링크 차단"), DiagnosticCode.UnsafeLink);
@@ -236,8 +237,11 @@ public sealed class TransferCoordinator
     }
     public IReadOnlyList<JobInfo> History()
     {
-        string root = Path.Combine(storageParent, "SafeFileSync");
+        string root = RecordStorageLocation.RootFor(storageParent);
         if (!Directory.Exists(root)) return [];
+        using var parent = DirectoryLease.Acquire(storageParent);
+        using var defaultFolder = RecordStorageLocation.IsDefaultParent(parent.FinalPath) ? DirectoryLease.Acquire(root) : null;
+        if (defaultFolder is not null) RecordStorageLocation.ValidatePrivateDirectory(defaultFolder.FinalPath);
         var list = new List<JobInfo>();
         foreach (var path in Directory.EnumerateFiles(root, "*.sqlite").OrderByDescending(File.GetLastWriteTimeUtc).Take(100)) {
             try { using var db = new JobStore(path, true); list.Add(db.Info); }

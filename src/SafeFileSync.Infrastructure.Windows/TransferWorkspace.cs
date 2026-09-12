@@ -49,7 +49,7 @@ public sealed class TransferWorkspace : IDisposable
 
             var storageLease = DirectoryLease.Acquire(storageParent); pins.Add(storageLease);
             using var dst = DirectoryLease.Acquire(Destination);
-            StorageRoot = Path.Combine(storageLease.FinalPath,"SafeFileSync");
+            StorageRoot = RecordStorageLocation.RootFor(storageLease.FinalPath);
             foreach (var source in mappings) {
                 using var src = DirectoryLease.Acquire(source.Path);
                 if (storageLease.Identities.Contains(src.Identities[^1]) || storageLease.Identities.Contains(dst.Identities[^1])
@@ -64,7 +64,13 @@ public sealed class TransferWorkspace : IDisposable
                 CheckStoragePair(Destination, StorageRoot);
             }
             Demand(StorageRoot,FileOperation.Create);
-            Directory.CreateDirectory(NativeFiles.Extended(StorageRoot)); pins.Add(DirectoryLease.Acquire(StorageRoot));
+            try {
+                if (RecordStorageLocation.IsDefaultParent(storageLease.FinalPath)) RecordStorageLocation.CreatePrivateDirectory(StorageRoot);
+                else Directory.CreateDirectory(NativeFiles.Extended(StorageRoot));
+                pins.Add(DirectoryLease.Acquire(StorageRoot));
+            } catch (UnauthorizedAccessException ex) {
+                throw new UnauthorizedAccessException("기록 폴더를 사용할 권한이 없습니다. 기록 위치를 모든 원본·목적지 밖의 쓰기 가능한 폴더로 변경하세요. " + ex.Message, ex);
+            }
         } catch { Dispose(); throw; }
     }
     private static void CheckStoragePair(string root, string storage)
