@@ -103,6 +103,23 @@ try {
    }
   }
  }
+ function Assert-PinnedSettingsVisible {
+  $windowBounds = $window.Current.BoundingRectangle
+  $sourceScroll = Find-Element 'SettingsScroll' $true
+  $sourceBounds = $sourceScroll.Current.BoundingRectangle
+  if ($sourceScroll.Current.IsOffscreen -or $sourceBounds.Height -le 0) { throw 'Source settings are not available in the window.' }
+  foreach ($id in @('DestinationPath','Mode','ReplaceExisting')) {
+   $element = Find-Element $id $true
+   $bounds = $element.Current.BoundingRectangle
+   if ($element.Current.IsOffscreen -or -not $element.Current.IsEnabled -or $bounds.Width -le 0 -or $bounds.Height -le 0) {
+    throw "Pinned setting $id is hidden or unusable at the actual window size."
+   }
+   if ($bounds.Left -lt $windowBounds.Left -or $bounds.Top -lt $windowBounds.Top -or $bounds.Right -gt $windowBounds.Right -or $bounds.Bottom -gt $windowBounds.Bottom) {
+    throw "Pinned setting $id extends outside the visible app window."
+   }
+   if ($bounds.Top -lt ($sourceBounds.Bottom - 1)) { throw "Pinned setting $id is still clipped by or overlaps the source-only scrolling area." }
+  }
+ }
  function Wait-Code([string]$expected) {
   $started = [DateTime]::UtcNow
   $end = $started.AddSeconds(40)
@@ -215,6 +232,7 @@ try {
  $window = Wait-AppWindow $process
  Assert-RecordsUIHidden
  Assert-NoCode
+ Assert-PinnedSettingsVisible
  $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
  if ($selection.Length -ne 1) { throw 'A fresh app did not automatically load and select its default job history.' }
  Set-Value 'SourcePath_1' $srcB $true
@@ -239,6 +257,7 @@ try {
  $bitmap.Save((Join-Path (Get-Location) ('artifacts/ui/' + $name)),[System.Drawing.Imaging.ImageFormat]::Png)
  $graphics.Dispose(); $bitmap.Dispose()
  }
+ Assert-PinnedSettingsVisible
  if ((Find-Element 'Differences' $true).Current.BoundingRectangle.Height -lt 120) { throw 'Result table is too short to inspect at the actual window size.' }
  Capture-Window 'wpf-copy-result.png'
  $tab = Find-Element '양쪽 폴더'
@@ -270,6 +289,7 @@ try {
  Assert-Code 'S13'; Assert-CodeClipboard 'S13'
  if ([IO.File]::ReadAllText($conflictFile) -ne 'destination conflict fixture with different length') { throw 'Preserve policy overwrote a conflicting destination.' }
  (Find-Element '차이 및 검증 결과').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+ Assert-PinnedSettingsVisible
  if ((Find-Element 'Differences' $true).Current.BoundingRectangle.Height -lt 120) { throw 'Support code panel left too little room for result inspection.' }
  Capture-Window 'wpf-support-code.png'
  [IO.File]::WriteAllText($conflictFile,[IO.File]::ReadAllText((Join-Path $src 'example.txt')))
