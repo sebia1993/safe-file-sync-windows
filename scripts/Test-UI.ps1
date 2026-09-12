@@ -126,11 +126,13 @@ try {
  $bitmap.Save((Join-Path (Get-Location) ('artifacts/ui/' + $name)),[System.Drawing.Imaging.ImageFormat]::Png)
  $graphics.Dispose(); $bitmap.Dispose()
  }
+ if ((Find-Element 'Differences' $true).Current.BoundingRectangle.Height -lt 120) { throw 'Result table is too short to inspect at the actual window size.' }
  Capture-Window 'wpf-copy-result.png'
  $tab = Find-Element '양쪽 폴더'
  $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
  foreach ($treeName in @('원본 폴더 내용','목적지 폴더 내용')) {
   $tree = Find-Element $treeName
+  if ($tree.Current.BoundingRectangle.Height -lt 120) { throw "Folder tree is too short to inspect: $treeName" }
   foreach ($sourceName in @('A','B')) {
    $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,$sourceName)
    $sourceFolder = $tree.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
