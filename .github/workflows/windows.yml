@@ -64,12 +64,17 @@ jobs:
           "SFS_SMB_NAME=$name" >> $env:GITHUB_ENV
           "SFS_SMB_LOCAL=$path" >> $env:GITHUB_ENV
           "SFS_SMB_UNC=\\localhost\$name" >> $env:GITHUB_ENV
+          $drive = @('Z:', 'Y:', 'X:', 'W:') | Where-Object { -not (Test-Path "$_\") -and -not (Get-SmbMapping -LocalPath $_ -ErrorAction SilentlyContinue) } | Select-Object -First 1
+          if (-not $drive) { throw 'No unused drive letter for isolated SMB fixture.' }
+          New-SmbMapping -LocalPath $drive -RemotePath "\\localhost\$name" -Persistent $false | Out-Null
+          "SFS_SMB_DRIVE=$drive\" >> $env:GITHUB_ENV
       - name: Test local to SMB and SMB to local with alias guards
         run: dotnet test tests/SafeFileSync.Tests -c Release --filter "Category=Smb" --logger "trx;LogFileName=smb.trx"
       - name: Remove isolated SMB fixture
         if: always()
         shell: pwsh
         run: |
+          if ($env:SFS_SMB_DRIVE) { Remove-SmbMapping -LocalPath $env:SFS_SMB_DRIVE.TrimEnd('\') -Force }
           if ($env:SFS_SMB_NAME) { Remove-SmbShare -Name $env:SFS_SMB_NAME -Force }
           if ($env:SFS_SMB_LOCAL -and (Test-Path $env:SFS_SMB_LOCAL)) { Remove-Item $env:SFS_SMB_LOCAL -Recurse -Force }
       - uses: actions/upload-artifact@v7.0.1

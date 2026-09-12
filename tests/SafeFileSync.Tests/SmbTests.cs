@@ -6,6 +6,30 @@ namespace SafeFileSync.Tests;
 [Trait("Category","Smb")]
 public sealed class SmbTests
 {
+    [Fact] public async Task UserProfileToMappedDriveRootUsesExternalRecords()
+    {
+        string drive = Environment.GetEnvironmentVariable("SFS_SMB_DRIVE") ?? throw new InvalidOperationException("Mapped SMB fixture missing.");
+        string sharedLocal = Environment.GetEnvironmentVariable("SFS_SMB_LOCAL")!;
+        string fixture = Path.Combine(Path.GetTempPath(),"SfsProfile-" + Guid.NewGuid().ToString("N"));
+        string source = Path.Combine(fixture,"profile"), storage = Path.Combine(fixture,"records"), appData = Path.Combine(source,"AppData","Local");
+        Directory.CreateDirectory(appData); Directory.CreateDirectory(storage);
+        try {
+            string name = "profile-" + Guid.NewGuid().ToString("N") + ".txt";
+            string file = Path.Combine(source,name); File.WriteAllText(file,"profile source unchanged");
+            long time = File.GetLastWriteTimeUtc(file).Ticks;
+            await Assert.ThrowsAsync<IOException>(() => new TransferCoordinator(appData).RunAsync(source,drive,VerificationMode.Sha256,ConflictPolicy.Preserve,true));
+            Assert.False(Directory.Exists(Path.Combine(appData,"SafeFileSync")));
+            var result = await new TransferCoordinator(storage).RunAsync(source,drive,VerificationMode.Sha256,ConflictPolicy.Preserve,true);
+            using var db = new JobStore(result.Info.DatabasePath,true);
+            Assert.True(result.Info.Status == "Completed",string.Join("; ",db.Outcomes().Select(o=>o.Detail)) + result.SourceCheck);
+            Assert.Equal("profile source unchanged",File.ReadAllText(Path.Combine(drive,name)));
+            Assert.Equal("profile source unchanged",File.ReadAllText(file)); Assert.Equal(time,File.GetLastWriteTimeUtc(file).Ticks);
+            Assert.True(result.Summary.AllSourceEntriesMatch); Assert.Equal(100d,result.HashPercent);
+            Assert.Throws<IOException>(() => RootSafetyLease.Acquire(sharedLocal,drive));
+            Assert.Throws<IOException>(() => new TransferWorkspace(source,drive,sharedLocal));
+            Assert.False(Directory.Exists(Path.Combine(sharedLocal,"SafeFileSync")));
+        } finally { Directory.Delete(fixture,true); }
+    }
     [Theory][InlineData(false)][InlineData(true)]
     public async Task LocalAndUncTransferIsVerified(bool uncSource)
     {

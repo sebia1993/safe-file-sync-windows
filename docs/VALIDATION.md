@@ -1,3 +1,15 @@
+# Validation gates - 0.1.0-alpha.2
+
+The release workflow runs the full Windows suite before publication. New regression gates cover:
+- A synthetic user profile with AppData inside source: unsafe records rejected before writes, external records support copy/history/resume with unchanged source data/metadata.
+- Storage within destination remains blocked.
+- Real SMB mapping to a drive-letter root: profile copy with external records, source preservation and local/mapped physical-overlap rejection.
+- Standalone WPF UI: unsafe records error, external location entry, correct DB/report location, history switching and resume.
+
+A listed gate is not a claim that a pending run passed. Delivery reports the completed run and independent checksum/ZIP/commit checks. Actual Windows 11/company network/EDR/DLP acceptance remains separate (see ACCEPTANCE.md).
+
+---
+
 # Validation record — 0.1.0-alpha.1
 
 Verified implementation: `5b8d9074fc69cf27d8129e39b0f2176f99d0038c`.

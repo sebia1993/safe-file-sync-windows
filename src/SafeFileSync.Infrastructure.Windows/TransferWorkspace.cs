@@ -22,7 +22,7 @@ public sealed class TransferWorkspace : IDisposable
             using var src = DirectoryLease.Acquire(Source);
             using var dst = DirectoryLease.Acquire(Destination);
             if (storageLease.Identities.Contains(src.Identities[^1]) || storageLease.Identities.Contains(dst.Identities[^1]))
-                throw new IOException("작업 저장소를 원본/목적지 내부에 만들 수 없습니다.");
+                throw new IOException($"작업 기록 위치({Path.Combine(storageLease.FinalPath, "SafeFileSync")})가 원본 또는 목적지 안에 있습니다. 화면의 기록 위치를 양쪽 폴더 밖의 쓰기 가능한 폴더로 변경하세요.");
             StorageRoot = Path.Combine(storageLease.FinalPath, "SafeFileSync");
             guard.Demand(StorageRoot, FileOperation.Create);
             PathSafetyService.ValidatePair(Source,StorageRoot); PathSafetyService.ValidatePair(Destination,StorageRoot);

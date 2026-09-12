@@ -1,7 +1,7 @@
 # Safety model
 
 ## Invariant
-The app never intentionally deletes, moves, renames, truncates, writes or creates anything inside the selected source. No source metadata setters exist. Source data opens request read access only. Reports and SQLite databases live under LocalAppData/SafeFileSync, after source/storage separation checks. Windows access-time behavior is outside the app's control; PASS refers to the observed manifest scope, not an OS snapshot.
+The app never intentionally deletes, moves, renames, truncates, writes or creates anything inside the selected source. No source metadata setters exist. Source data opens request read access only. Reports and SQLite databases live under SafeFileSync in the user-selected existing parent directory (default LocalAppData), after unchanged source/storage separation checks. The location selection is not persisted in the user profile; reselect it after restart to load its history. Windows access-time behavior is outside the app's control; PASS refers to the observed manifest scope, not an OS snapshot.
 
 ## Paths and handles
 Lexical validation rejects equal/nested roots in both directions, relative/device/extended inputs, alternate streams, ambiguous/reserved names. Internal native paths use the extended syntax for long paths.
