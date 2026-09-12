@@ -87,7 +87,7 @@ public sealed class DiagnosticIntegrationTests : IDisposable
         bool removed = false;
         var progress = new ImmediateProgress(p =>
         {
-            if (p.Phase == "스캔: destination-after")
+            if (p.Phase == "스캔: destination-after" && !removed)
             {
                 Assert.True(File.Exists(target));
                 File.Delete(target);
@@ -109,7 +109,7 @@ public sealed class DiagnosticIntegrationTests : IDisposable
         bool changed = false;
         var progress = new ImmediateProgress(p =>
         {
-            if (p.Phase == "스캔: source-after")
+            if (p.Phase == "스캔: source-after" && !changed)
             {
                 File.WriteAllText(Original, "external fixture mutation after copy");
                 changed = true;
