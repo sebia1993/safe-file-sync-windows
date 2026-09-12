@@ -8,8 +8,10 @@ public sealed record ScanEntry(string RelativePath, EntryKind Kind, long Length 
 public sealed record Difference(string RelativePath, DifferenceKind Kind, ScanEntry? Source, ScanEntry? Destination);
 public sealed record TransferProgress(string Phase, string RelativePath, long CompletedFiles = 0,
     long TotalFiles = 0, long CompletedBytes = 0, long TotalBytes = 0, string? Detail = null);
+public sealed record TransferSource(string Path, string FolderName);
 public sealed record JobInfo(string Id, string Source, string Destination, VerificationMode Mode,
-    ConflictPolicy Conflicts, string Status, string DatabasePath, string StartedUtc);
+    ConflictPolicy Conflicts, string Status, string DatabasePath, string StartedUtc,
+    IReadOnlyList<TransferSource>? Sources = null);
 public sealed record ComparisonSummary(long Matched, long Missing, long Different, long Extra, long Unverified)
 {
     public long SourceEntries => Matched + Missing + Different + Unverified;

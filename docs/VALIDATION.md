@@ -1,3 +1,16 @@
+# Validation gates - 0.1.0-alpha.3
+
+New work uses a single job/manifest for named sources. The existing Windows workflow gates publication with:
+- Multiple source folders with colliding relative filenames and empty roots; separate destination subfolders and aggregate SHA-256 results.
+- All-source destination/storage overlap checks before creation; duplicate/nested sources and invalid/colliding destination names.
+- Frozen source mapping on resume, cross-source cancellation/mutation evidence and namespaced failed-only retry.
+- Multiple sources to a mapped SMB destination, alongside existing local/UNC coverage.
+- WPF add/remove/edit source mappings, combined results, history restore, cancellation/resume and legacy single-source support.
+
+These are required gates, not a claim that a pending run has passed. The delivery response links the completed run and records downloaded ZIP/checksum/tag identity verification. Actual company PCs, network policies and physical interruptions remain outside hosted Windows CI.
+
+---
+
 # Validation gates - 0.1.0-alpha.2
 
 The release workflow runs the full Windows suite before publication. New regression gates cover:
