@@ -24,6 +24,9 @@ New-Item -ItemType Directory -Path $src,$srcB,$dst,$insideRecords,$records,$empt
 [IO.File]::WriteAllText((Join-Path $srcB 'example.txt'),'UI transfer source B')
 New-Item -ItemType Directory -Path (Join-Path $src 'nested') | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'nested/child.txt'),'nested source')
+$defaultParent = [IO.Path]::GetPathRoot([Environment]::SystemDirectory)
+$defaultRecordRoot = Join-Path $defaultParent 'SafeFileSync'
+$defaultRecordsExisted = Test-Path $defaultRecordRoot
 $process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
 try {
  $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -106,6 +109,27 @@ try {
    if ($copied.Contains($privateValue)) { throw 'Clipboard included fixture data instead of a code only.' }
   }
  }
+ if ((Read-Value 'StoragePath') -ne $defaultParent) { throw 'Startup records parent is not the Windows system-drive root.' }
+ $expectedDefaultPreview = '실제 기록 폴더: ' + $defaultRecordRoot + ' · 겹침 검사 후 생성'
+ if ((Find-Element 'StorageActualPath' $true).Current.Name -ne $expectedDefaultPreview) { throw 'Startup actual records folder preview is incorrect.' }
+ if (-not $defaultRecordsExisted -and (Test-Path $defaultRecordRoot)) { throw 'Startup or initial history loading unexpectedly created the default records folder.' }
+ Set-Value 'StoragePath' '' $true
+ if ((Find-Element 'StorageActualPath' $true).Current.Name -ne '실제 기록 폴더: 기준 폴더를 입력하세요.') { throw 'Empty records input was not handled safely.' }
+ Set-Value 'StoragePath' 'C:' $true
+ if ((Find-Element 'StorageActualPath' $true).Current.Name -ne '실제 기록 폴더: 유효한 기준 폴더를 입력하세요.') { throw 'Partial records path was not handled safely.' }
+ Set-Value 'StoragePath' $records $true
+ if (-not (Find-Element 'StorageActualPath' $true).Current.Name.Contains((Join-Path $records 'SafeFileSync'))) { throw 'Custom records folder preview did not follow typing.' }
+ (Find-Element 'StoragePath' $true).SetFocus()
+ (Find-Element 'SourcePath_1' $true).SetFocus()
+ Invoke-Button 'ResetStorageLocation' $true
+ $end = [DateTime]::UtcNow.AddSeconds(5)
+ do {
+  if ((Read-Value 'StoragePath') -eq $defaultParent -and (Find-Element 'StorageActualPath' $true).Current.Name -eq $expectedDefaultPreview) { break }
+  Start-Sleep -Milliseconds 100
+ } while ([DateTime]::UtcNow -lt $end)
+ if ((Read-Value 'StoragePath') -ne $defaultParent -or (Find-Element 'StorageActualPath' $true).Current.Name -ne $expectedDefaultPreview) { throw 'Default records reset did not restore the parent and actual folder preview.' }
+ if (-not $defaultRecordsExisted -and (Test-Path $defaultRecordRoot)) { throw 'Records selection/reset/history loading unexpectedly created the default records folder.' }
+ Write-Output 'Default system-drive record location, actual-folder preview, reset and noncreating history checks passed.'
  Invoke-Button 'RemoveSource_1' $true
  Invoke-Button '복사 시작'; Wait-Status '원본 폴더를 1개 이상'
  Assert-Code 'S01'

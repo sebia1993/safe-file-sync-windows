@@ -1,7 +1,11 @@
 # Safety model
 
 ## Invariant
-The app never intentionally deletes, moves, renames, truncates, writes or creates anything inside the selected source. No source metadata setters exist. Source data opens request read access only. Reports and SQLite databases live under SafeFileSync in the user-selected existing parent directory (default LocalAppData), after unchanged source/storage separation checks. The location selection is not persisted in the user profile; reselect it after restart to load its history. Windows access-time behavior is outside the app's control; PASS refers to the observed manifest scope, not an OS snapshot.
+The app never intentionally deletes, moves, renames, truncates, writes or creates anything inside the selected source. No source metadata setters exist. Source data opens request read access only. Reports and SQLite databases live under SafeFileSync in the user-selected existing parent directory (default: Windows system-drive root, normally C:\), after unchanged source/storage separation checks. The location selection is not persisted in the user profile; reselect a custom location after restart to load its history. Windows access-time behavior is outside the app's control; PASS refers to the observed manifest scope, not an OS snapshot.
+
+기본 기록 위치는 UI와 실행 엔진이 같은 값으로 계산하며 실제 폴더는 보통 `C:\SafeFileSync`입니다. 시작·이력 조회에서는 폴더를 생성하지 않습니다. 작업 시작 시 모든 원본·목적지와 문자열·물리 경로 겹침을 확인한 뒤에만 기록 폴더를 만듭니다. 기본 위치의 신규 폴더는 상속을 차단한 DACL에 현재 사용자 SID·SYSTEM·Administrators의 FullControl을 지정하고 하위 파일·폴더에 상속합니다. 기존 기본 폴더는 소유자·허용 ACL을 검사한 뒤 이력·DB를 읽거나 재사용하며 기존 ACL을 수정하지 않습니다. 생성 권한이 없거나 기존 권한 검사를 통과하지 못하면 S04로 차단합니다. 직접 선택한 다른 기록 기준 폴더에는 기존 권한 정책을 유지합니다.
+
+이전 AppData 기록의 자동 이동·삭제나 AppData로의 자동 복귀는 없습니다. 이전 위치를 직접 선택하면 해당 이력을 사용합니다. 시스템 드라이브 전체가 원본이면 기본 기록 위치도 원본에 포함되므로 다른 드라이브의 안전한 위치가 필요합니다.
 
 ## Paths and handles
 Lexical validation rejects equal/nested roots in both directions, relative/device/extended inputs, alternate streams, ambiguous/reserved names. Internal native paths use the extended syntax for long paths.

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
@@ -19,7 +20,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent(); SourceItems.ItemsSource = sourceRows; AppendSource(new SourceRow());
-        StoragePath.Text = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); RefreshHistory(); Closing += OnClosing;
+        StoragePath.Text = RecordStorageLocation.DefaultParent; RefreshHistory(); Closing += OnClosing;
     }
     private void AddSource(object sender, RoutedEventArgs e) { SetPlacement(false); AppendSource(new SourceRow()); }
     private void RemoveSource(object sender, RoutedEventArgs e)
@@ -53,9 +54,18 @@ public partial class MainWindow : Window
     }
     private void BrowseDestination(object sender, RoutedEventArgs e) => Browse(DestinationPath);
     private void BrowseStorage(object sender, RoutedEventArgs e) { Browse(StoragePath); RefreshHistory(); }
+    private void ResetStorageLocation(object sender, RoutedEventArgs e) { StoragePath.Text = RecordStorageLocation.DefaultParent; UpdateStoragePreview(); RefreshHistory(); }
+    private void UpdateStoragePreview()
+    {
+        if (string.IsNullOrWhiteSpace(StoragePath.Text)) { StorageActualPath.Text = "실제 기록 폴더: 기준 폴더를 입력하세요."; return; }
+        try { StorageActualPath.Text = $"실제 기록 폴더: {RecordStorageLocation.RootFor(StoragePath.Text)} · 겹침 검사 후 생성"; }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        { StorageActualPath.Text = "실제 기록 폴더: 유효한 기준 폴더를 입력하세요."; }
+    }
     private void StorageChanged(object sender, TextChangedEventArgs e)
     {
         if (History is null) return;
+        UpdateStoragePreview();
         SetSupportCode(null);
         coordinator = new TransferCoordinator(StoragePath.Text);
         History.ItemsSource = null; report = null; ReportButton.IsEnabled = false;
