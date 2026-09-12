@@ -15,13 +15,13 @@ public sealed class FolderScanner
             DirectoryLease? lease = null;
             ScanEntry? error = null;
             try { lease = DirectoryLease.Acquire(directory); }
-            catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message); }
+            catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message, ErrorCode: DiagnosticCodes.FromException(ex)); }
             if (error is not null) { yield return error; continue; }
             using (lease)
             {
                 IEnumerator<string>? iterator = null;
                 try { iterator = Directory.EnumerateFileSystemEntries(NativeFiles.Extended(directory)).GetEnumerator(); }
-                catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message); }
+                catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message, ErrorCode: DiagnosticCodes.FromException(ex)); }
                 if (error is not null) { yield return error; continue; }
                 using (iterator)
                 {
@@ -30,7 +30,7 @@ public sealed class FolderScanner
                         token.ThrowIfCancellationRequested();
                         string? path = null;
                         try { if (iterator!.MoveNext()) path = RemoveExtended(iterator.Current); }
-                        catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message); }
+                        catch (Exception ex) when (IsScanError(ex)) { error = new(Relative(root, directory), EntryKind.Error, Detail: ex.Message, ErrorCode: DiagnosticCodes.FromException(ex)); }
                         if (error is not null) { yield return error; break; }
                         if (path is null) break;
                         if (internalExcludedDirectory is not null && Relative(root,path).Equals(internalExcludedDirectory,StringComparison.OrdinalIgnoreCase)) continue;
@@ -48,7 +48,7 @@ public sealed class FolderScanner
         try {
             PathSafetyService.Normalize(path);
             var attributes = File.GetAttributes(NativeFiles.Extended(path));
-            if (attributes.HasFlag(FileAttributes.ReparsePoint)) return new(relative, EntryKind.Excluded, Detail: "심볼릭 링크/Junction/Reparse point 제외");
+            if (attributes.HasFlag(FileAttributes.ReparsePoint)) return new(relative, EntryKind.Excluded, Detail: "심볼릭 링크/Junction/Reparse point 제외", ErrorCode: DiagnosticCode.UnsafeLink);
             if (attributes.HasFlag(FileAttributes.Directory)) {
                 using var lease = DirectoryLease.Acquire(path);
                 return new(relative, EntryKind.Directory, Identity: lease.Identities[^1]);
@@ -59,9 +59,9 @@ public sealed class FolderScanner
             if (mode == VerificationMode.Sha256) hash = Hash(stream, token);
             var after = NativeFiles.Info(stream.SafeFileHandle);
             if (before.Length != after.Length || before.WriteTicks != after.WriteTicks || before.Identity != after.Identity)
-                return new(relative, EntryKind.Error, Detail: "검사 중 파일 변경 감지");
+                return new(relative, EntryKind.Error, Detail: "검사 중 파일 변경 감지", ErrorCode: DiagnosticCode.SourceChanged);
             return new(relative, EntryKind.File, after.Length, after.WriteTicks, hash, Identity: after.Identity, Links: after.Links);
-        } catch (Exception ex) when (IsScanError(ex)) { return new(relative, EntryKind.Error, Detail: ex.Message); }
+        } catch (Exception ex) when (IsScanError(ex)) { return new(relative, EntryKind.Error, Detail: ex.Message, ErrorCode: DiagnosticCodes.FromException(ex)); }
     }
     internal static string Hash(Stream stream, CancellationToken token)
     {

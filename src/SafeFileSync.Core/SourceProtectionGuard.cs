@@ -8,7 +8,7 @@ public sealed class SourceProtectionGuard
     {
         if (!Enum.IsDefined(operation)) throw new ArgumentOutOfRangeException(nameof(operation));
         if (PathSafetyService.IsWithin(path, source) && operation != FileOperation.Read)
-            throw new InvalidOperationException("원본 영역에는 읽기만 허용됩니다.");
+            throw DiagnosticCodes.Tag(new InvalidOperationException("원본 영역에는 읽기만 허용됩니다."), DiagnosticCode.PathOverlap);
     }
 }
 

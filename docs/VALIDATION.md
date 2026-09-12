@@ -1,3 +1,16 @@
+# Validation gates - 0.1.0-alpha.4
+
+The existing Windows workflow gates publication with:
+- Finite, stable three-character error codes; arbitrary exception messages, Data, unknown enum values and native error numbers cannot become clipboard payloads.
+- Actual locked-file scanner/preflight propagation, storage/source overlap, preserved conflicts, source changes, incomplete scans and final destination verification failures.
+- Successful and ordinary compare results have no stale error code; interrupted and resumed work retains the original safety rules.
+- Standalone WPF shows and copies exactly S01/S03/S13, replaces earlier codes, clears codes after recovery, and preserves usable result/table/tree heights.
+- The full existing source-protection, multi-source, local/UNC/mapped SMB and standalone package suites remain required.
+
+These are required gates, not a claim that a pending run passed. The delivery response links the completed Windows run and records downloaded ZIP/checksum/tag identity verification. Actual company PCs, clipboard/DLP policies and physical network interruptions remain outside hosted CI.
+
+---
+
 # Validation gates - 0.1.0-alpha.3
 
 New work uses a single job/manifest for named sources. The existing Windows workflow gates publication with:

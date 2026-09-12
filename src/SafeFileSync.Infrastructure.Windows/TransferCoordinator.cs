@@ -2,7 +2,7 @@ using System.Text.Json;
 using SafeFileSync.Core;
 namespace SafeFileSync.Infrastructure.Windows;
 
-public sealed record JobView(JobInfo Info, ComparisonSummary Summary, IReadOnlyList<Difference> Rows, string SourceCheck, string? ReportPath, double? TransferPercent, double? HashPercent);
+public sealed record JobView(JobInfo Info, ComparisonSummary Summary, IReadOnlyList<Difference> Rows, string SourceCheck, string? ReportPath, double? TransferPercent, double? HashPercent, DiagnosticCode? ErrorCode = null);
 public sealed class TransferCoordinator
 {
     private readonly string storageParent;
@@ -22,23 +22,33 @@ public sealed class TransferCoordinator
         // Read saved mapping before any workspace/storage creation, including when resume input was changed.
         JobInfo? previous = resumeId is null ? null : ReadJob(id);
         if (previous is not null && (previous.Mode != mode || previous.Conflicts != conflicts))
-            throw new IOException("작업 재개 시 검증·교체 정책을 변경할 수 없습니다.");
+            throw DiagnosticCodes.Tag(new IOException("작업 재개 시 검증·교체 정책을 변경할 수 없습니다."), DiagnosticCode.JobRecord);
         using var workspace = new TransferWorkspace(sources, destination, storageParent, named, previous);
         string databasePath = Path.Combine(workspace.StorageRoot, id + ".sqlite");
         if (resumeId is null) {
             using var fresh = new FileStream(databasePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         } else {
             using var existing = NativeFiles.OpenRead(databasePath);
-            if (NativeFiles.Info(existing.SafeFileHandle).Links != 1) throw new IOException("작업 DB 하드링크 차단");
+            if (NativeFiles.Info(existing.SafeFileHandle).Links != 1) throw DiagnosticCodes.Tag(new IOException("작업 DB 하드링크 차단"), DiagnosticCode.UnsafeLink);
         }
         using var db = new JobStore(databasePath);
         if (resumeId is not null) {
             var saved = db.Info;
             if (saved.Id != id || !TransferWorkspace.SameSources(saved,workspace.Source,workspace.Sources) || !saved.Destination.Equals(workspace.Destination,StringComparison.OrdinalIgnoreCase) || saved.Mode != mode || saved.Conflicts != conflicts)
-                throw new IOException("작업 재개 시 원본·목적지·검증·교체 정책을 변경할 수 없습니다.");
+                throw DiagnosticCodes.Tag(new IOException("작업 재개 시 원본·목적지·검증·교체 정책을 변경할 수 없습니다."), DiagnosticCode.JobRecord);
         }
         var retryPaths = failedOnly ? db.Outcomes().Where(o => o.Status is "Failed" or "Copying").Select(o => o.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
         db.Initialize(new(id, workspace.Source, workspace.Destination, mode, conflicts, "Scanning", databasePath, DateTime.UtcNow.ToString("O"), workspace.Sources));
+        db.Set("error-code", ""); // A resumed attempt must not retain a resolved failure's code.
+        DiagnosticCode? errorCode = null;
+        void Note(DiagnosticCode code) => errorCode = DiagnosticCodes.Prefer(errorCode, code);
+        void NoteEntries(IEnumerable<ScanEntry> entries) {
+            foreach (var entry in entries) {
+                if (entry.ErrorCode is { } code) Note(code);
+                else if (entry.Kind is EntryKind.Error or EntryKind.Excluded)
+                    Note(entry.Kind == EntryKind.Excluded ? DiagnosticCode.UnsafeLink : DiagnosticCode.VerificationIncomplete);
+            }
+        }
         var scanner = new FolderScanner();
         string stageRelative = ".safefilesync-" + id;
         string sourceCheck = "검사 전";
@@ -46,19 +56,26 @@ public sealed class TransferCoordinator
             progress?.Report(new("스캔: " + name, root));
             // Only the exact staging directory owned by this job is excluded from destination comparison.
             var entries = destinationScan ? scanner.Scan(root,mode,token,stageRelative) : workspace.ScanSources(scanner,mode,token);
+            if (destinationScan) entries = entries.Select(entry => entry.ErrorCode == DiagnosticCode.SourceChanged
+                ? entry with { ErrorCode = DiagnosticCode.VerificationIncomplete } : entry);
             db.SaveSnapshot(name, entries, token, (n,b) => progress?.Report(new("스캔: " + name, root, n, CompletedBytes: b)));
+            NoteEntries(db.Entries(name));
         }
         try {
             Scan("source-before", workspace.Source);
             db.PreserveOriginalSnapshot("source-before","source-original");
             Scan("destination-before", workspace.Destination, true);
-            if (!copy) { db.SetStatus("Compared"); return View(db, "source-before", "destination-before", "복사 전 비교", null); }
+            if (!copy) {
+                db.SetStatus("Compared");
+                db.Set("error-code", errorCode is { } code ? DiagnosticCodes.Format(code) : "");
+                return View(db, "source-before", "destination-before", "복사 전 비교", null, errorCode);
+            }
             db.SetStatus("Preflight");
             workspace.ProtectSourceTree(db.Entries("source-before"), token);
             workspace.CheckDestinationTree(db.Entries("destination-before"), token);
             // Reject a source collision with the internal staging namespace.
             if (db.Entries("source-before").Any(e => e.RelativePath.Split('\\')[0].Equals(stageRelative, StringComparison.OrdinalIgnoreCase)))
-                throw new IOException("원본 이름과 작업 임시 영역이 충돌합니다.");
+                throw DiagnosticCodes.Tag(new IOException("원본 이름과 작업 임시 영역이 충돌합니다."), DiagnosticCode.InvalidInput);
             var totals = db.Entries("source-before").Where(e => e.Kind == EntryKind.File).Aggregate((Files: 0L, Bytes: 0L), (v,e) => (v.Files + 1, checked(v.Bytes + e.Length)));
             // Reserve pending payload; already matched files and preserved conflicts need no staging space.
             var pending = db.Compare("source-before","destination-before",mode)
@@ -89,10 +106,10 @@ public sealed class TransferCoordinator
                             stream = NativeFiles.OpenRead(sourceFile);
                             var before = NativeFiles.Info(stream.SafeFileHandle);
                             if (before.Length != entry.Length || before.WriteTicks != entry.LastWriteUtcTicks || before.Identity != entry.Identity)
-                                throw new IOException("복사 전 원본 변경 감지");
+                                throw DiagnosticCodes.Tag(new IOException("복사 전 원본 변경 감지"), DiagnosticCode.SourceChanged);
                             progress?.Report(new("원본 내용 확인",entry.RelativePath,done,totals.Files,bytes,totals.Bytes));
                             string hash = FolderScanner.Hash(stream, token);
-                            if (entry.Hash is not null && entry.Hash != hash) throw new IOException("복사 전 원본 내용 변경 감지");
+                            if (entry.Hash is not null && entry.Hash != hash) throw DiagnosticCodes.Tag(new IOException("복사 전 원본 내용 변경 감지"), DiagnosticCode.SourceChanged);
                             workspace.EnsureDestinationDirectory(batchParent);
                             string stageDirectory = workspace.EnsureDestinationDirectory(Path.Combine(stageRelative, batchParent));
                             string stageFile = Path.Combine(stageDirectory, Path.GetFileName(sourceFile));
@@ -103,15 +120,15 @@ public sealed class TransferCoordinator
                             catch (DirectoryNotFoundException) { }
                             if (stageAttributes is not null) {
                                 if (stageAttributes.Value.HasFlag(FileAttributes.ReparsePoint) || stageAttributes.Value.HasFlag(FileAttributes.Directory))
-                                    throw new IOException("임시 경로 링크/폴더 차단");
+                                    throw DiagnosticCodes.Tag(new IOException("임시 경로 링크/폴더 차단"), DiagnosticCode.UnsafeLink);
                                 using var staged = NativeFiles.OpenRead(stageFile);
                                 var stageInfo = NativeFiles.Info(staged.SafeFileHandle);
-                                if (stageInfo.Links != 1) throw new IOException("임시 파일 하드링크 차단");
+                                if (stageInfo.Links != 1) throw DiagnosticCodes.Tag(new IOException("임시 파일 하드링크 차단"), DiagnosticCode.UnsafeLink);
                                 if (stageInfo.Length == entry.Length && stageInfo.WriteTicks == entry.LastWriteUtcTicks && FolderScanner.Hash(staged, token) == hash) needsCopy = false;
                             }
                             prepared.Add((entry, stream, hash, stageFile, needsCopy)); stream = null;
                             db.Outcome(entry.RelativePath, "Copying");
-                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
+                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; Note(DiagnosticCodes.FromException(ex)); db.Outcome(entry.RelativePath, "Failed", ex.Message); }
                         finally { stream?.Dispose(); }
                     }
                     db.FlushOutcomes(); // Persist in-progress files before starting the child process.
@@ -124,22 +141,22 @@ public sealed class TransferCoordinator
                     foreach (var item in prepared) {
                         try {
                             token.ThrowIfCancellationRequested();
-                            if (item.NeedsCopy && result.Failed) throw new IOException($"Robocopy 종료 코드 {result.ExitCode}: {result.Output}");
+                            if (item.NeedsCopy && result.Failed) throw DiagnosticCodes.Tag(new IOException($"Robocopy 종료 코드 {result.ExitCode}: {result.Output}"), DiagnosticCode.CopyFailed);
                             progress?.Report(new("임시 복사본 SHA-256 검증", item.Entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
                             using (var staged = NativeFiles.OpenRead(item.Stage)) {
                                 var info = NativeFiles.Info(staged.SafeFileHandle);
                                 if (info.Links != 1 || info.Length != item.Entry.Length || FolderScanner.Hash(staged, token) != item.Hash)
-                                    throw new IOException("임시 복사본 검증 실패: 최종 파일에 반영하지 않았습니다.");
+                                    throw DiagnosticCodes.Tag(new IOException("임시 복사본 검증 실패: 최종 파일에 반영하지 않았습니다."), DiagnosticCode.VerificationIncomplete);
                             }
                             var after = NativeFiles.Info(item.Source.SafeFileHandle);
                             if (after.Length != item.Entry.Length || after.WriteTicks != item.Entry.LastWriteUtcTicks)
-                                throw new IOException("복사 중 원본 변경 감지");
+                                throw DiagnosticCodes.Tag(new IOException("복사 중 원본 변경 감지"), DiagnosticCode.SourceChanged);
                             token.ThrowIfCancellationRequested();
                             workspace.Commit(item.Stage, item.Entry.RelativePath, conflicts);
                             db.Outcome(item.Entry.RelativePath, "CopiedAndVerified", $"Robocopy {result.ExitCode}; SHA-256 {item.Hash}");
                             done++; bytes += item.Entry.Length;
                             progress?.Report(new("복사", item.Entry.RelativePath, done, totals.Files, bytes, totals.Bytes));
-                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(item.Entry.RelativePath, "Failed", ex.Message); }
+                        } catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; Note(DiagnosticCodes.FromException(ex)); db.Outcome(item.Entry.RelativePath, "Failed", ex.Message); }
                     }
                 } finally { foreach (var item in prepared) item.Source.Dispose(); batch.Clear(); db.FlushOutcomes(); }
             }
@@ -147,19 +164,19 @@ public sealed class TransferCoordinator
                 token.ThrowIfCancellationRequested();
                 var entry = difference.Source;
                 if (entry is null) continue;
-                if (entry.Kind == EntryKind.Excluded) { failures++; db.Outcome(entry.RelativePath,"Excluded",entry.Detail ?? "링크 제외"); continue; }
+                if (entry.Kind == EntryKind.Excluded) { failures++; Note(DiagnosticCode.UnsafeLink); db.Outcome(entry.RelativePath,"Excluded",entry.Detail ?? "링크 제외"); continue; }
                 if (retryPaths is not null && !retryPaths.Contains(entry.RelativePath) && difference.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified)) continue;
                 if (entry.Kind == EntryKind.Directory) {
                     await Flush();
                     try { workspace.EnsureDestinationDirectory(entry.RelativePath); db.Outcome(entry.RelativePath, "Directory"); }
-                    catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; db.Outcome(entry.RelativePath, "Failed", ex.Message); }
+                    catch (Exception ex) when (FolderScanner.IsScanError(ex)) { failures++; Note(DiagnosticCodes.FromException(ex)); db.Outcome(entry.RelativePath, "Failed", ex.Message); }
                     continue;
                 }
                 if (difference.Kind is DifferenceKind.QuickMatch or DifferenceKind.Verified) {
                     done++; bytes += entry.Length; db.Outcome(entry.RelativePath, "Skipped"); continue;
                 }
                 if (difference.Destination is not null && conflicts == ConflictPolicy.Preserve) {
-                    failures++; db.Outcome(entry.RelativePath, "Failed", "목적지 기존 항목 보존: 교체 정책이 선택되지 않았습니다."); continue;
+                    failures++; Note(DiagnosticCode.DestinationConflict); db.Outcome(entry.RelativePath, "Failed", "목적지 기존 항목 보존: 교체 정책이 선택되지 않았습니다."); continue;
                 }
                 string parent = Path.GetDirectoryName(entry.RelativePath) ?? "";
                 if (batch.Count == 32 || batchParent != parent || batch.Sum(e => e.RelativePath.Length) + entry.RelativePath.Length > 20000) await Flush();
@@ -177,13 +194,23 @@ public sealed class TransferCoordinator
             db.Set("sourceCheck", sourceCheck);
             var final = db.Summary("source-after", "destination-after", mode);
             db.SetStatus(failures == 0 && unchanged.TreesMatch && !changedMetadata && final.AllSourceEntriesMatch ? "Completed" : "NeedsAttention");
+            // An incomplete scan is not proof of a changed source. Only observed differences carry S10.
+            bool observedChange = db.Compare("source-original", "source-after", mode).Any(d =>
+                d.Kind is DifferenceKind.Different or DifferenceKind.TypeConflict
+                || (unchanged.Unverified == 0 && d.Kind is DifferenceKind.Missing or DifferenceKind.Extra)
+                || (d.Source?.Kind is EntryKind.File or EntryKind.Directory && d.Destination?.Kind is EntryKind.File or EntryKind.Directory
+                    && (d.Source.LastWriteUtcTicks != d.Destination.LastWriteUtcTicks || d.Source.Identity != d.Destination.Identity)));
+            if (observedChange) Note(DiagnosticCode.SourceChanged);
+            if (db.Info.Status == "Completed") errorCode = null;
+            else errorCode ??= DiagnosticCode.VerificationIncomplete;
+            db.Set("error-code", errorCode is { } finalCode ? DiagnosticCodes.Format(finalCode) : "");
             string report = ReportWriter.Write(db, "source-after", "destination-after", workspace.StorageRoot);
             db.Set("report", report);
-            return View(db, "source-after", "destination-after", sourceCheck, report);
-        } catch (OperationCanceledException) { db.SetStatus("Cancelled"); throw; }
-        catch (Exception ex) { db.Set("error",ex.Message); db.SetStatus("Failed"); throw; }
+            return View(db, "source-after", "destination-after", sourceCheck, report, errorCode);
+        } catch (OperationCanceledException) { db.Set("error-code", DiagnosticCodes.Format(DiagnosticCode.Cancelled)); db.SetStatus("Cancelled"); throw; }
+        catch (Exception ex) { db.Set("error-code", DiagnosticCodes.Format(DiagnosticCodes.FromException(ex))); db.Set("error",ex.Message); db.SetStatus("Failed"); throw; }
     }
-    private static JobView View(JobStore db, string source, string destination, string sourceCheck, string? report)
+    private static JobView View(JobStore db, string source, string destination, string sourceCheck, string? report, DiagnosticCode? errorCode)
     {
         long files = 0, hashes = 0;
         foreach (var row in db.Compare(source,destination,db.Info.Mode)) {
@@ -193,7 +220,7 @@ public sealed class TransferCoordinator
         double? hashPercent = db.Info.Mode == VerificationMode.Sha256 && files > 0 && db.Summary(source,destination,db.Info.Mode).Unverified == 0 ? 100d * hashes / files : null;
         var rows = db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is not (DifferenceKind.QuickMatch or DifferenceKind.Verified))
             .Concat(db.Compare(source,destination,db.Info.Mode).Where(d => d.Kind is DifferenceKind.QuickMatch or DifferenceKind.Verified)).Take(1000).ToArray();
-        return new(db.Info,db.Summary(source,destination,db.Info.Mode),rows,sourceCheck,report,transfer,hashPercent);
+        return new(db.Info,db.Summary(source,destination,db.Info.Mode),rows,sourceCheck,report,transfer,hashPercent,errorCode);
     }
     private JobInfo ReadJob(string id)
     {
@@ -201,10 +228,10 @@ public sealed class TransferCoordinator
         using var folder = DirectoryLease.Acquire(Path.Combine(parent.FinalPath,"SafeFileSync"));
         string path = Path.Combine(folder.FinalPath,id + ".sqlite");
         using var file = NativeFiles.OpenRead(path);
-        if (NativeFiles.Info(file.SafeFileHandle).Links != 1) throw new IOException("작업 DB 하드링크 차단");
+        if (NativeFiles.Info(file.SafeFileHandle).Links != 1) throw DiagnosticCodes.Tag(new IOException("작업 DB 하드링크 차단"), DiagnosticCode.UnsafeLink);
         using var db = new JobStore(path,true);
         var info = db.Info;
-        if (info.Id != id) throw new IOException("선택한 작업과 저장된 작업 ID가 다릅니다.");
+        if (info.Id != id) throw DiagnosticCodes.Tag(new IOException("선택한 작업과 저장된 작업 ID가 다릅니다."), DiagnosticCode.JobRecord);
         return info;
     }
     public IReadOnlyList<JobInfo> History()
