@@ -3,7 +3,7 @@
   <Style TargetType="Button"><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
   <Style TargetType="TextBox"><Setter Property="Padding" Value="8"/></Style>
  </Window.Resources>
- <Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1.4*" MinHeight="120" MaxHeight="420"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="190"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+ <Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="120" MaxHeight="320"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="190"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <StackPanel><TextBlock Text="SafeFileSync" FontSize="28" FontWeight="Bold" Foreground="#173C50"/><TextBlock Text="원본은 읽기 전용 · 목적지 추가 파일 보존 · 복사 후 검증" Margin="0,4,0,16"/></StackPanel>
   <ScrollViewer Grid.Row="1" x:Name="SettingsScroll" AutomationProperties.AutomationId="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,12">
   <StackPanel x:Name="Settings">
@@ -24,12 +24,9 @@
      </Border>
     </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
    </ScrollViewer>
-   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Text="목적지 폴더" VerticalAlignment="Center"/><TextBox Grid.Column="1" Grid.ColumnSpan="2" x:Name="DestinationPath" AutomationProperties.AutomationId="DestinationPath" AutomationProperties.Name="목적지 폴더 경로" Margin="0,0,8,8" TextChanged="DestinationChanged"/><Button Grid.Column="3" Content="찾기" Click="BrowseDestination" Margin="0,0,0,8"/>
-    <TextBlock Grid.Row="1" Text="기록 위치" VerticalAlignment="Center"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="StoragePath" AutomationProperties.AutomationId="StoragePath" AutomationProperties.Name="작업 기록 기준 폴더" Margin="0,0,8,8" TextChanged="StorageChanged" LostKeyboardFocus="StorageFocusLost"/><Button Grid.Row="1" Grid.Column="2" Content="찾기" AutomationProperties.Name="기록 위치 찾기" Click="BrowseStorage" Margin="0,0,8,8"/><Button Grid.Row="1" Grid.Column="3" Content="기본 위치" AutomationProperties.AutomationId="ResetStorageLocation" Click="ResetStorageLocation" Margin="0,0,0,8"/>
-    <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" x:Name="StorageActualPath" AutomationProperties.AutomationId="StorageActualPath" Text="실제 기록 폴더: 기준 폴더를 입력하세요." TextWrapping="Wrap" Foreground="#173C50" Margin="0,0,0,8"/>
-    <TextBlock Grid.Row="3" Grid.ColumnSpan="4" Text="실제 기록 폴더는 모든 원본·목적지 밖에 있어야 합니다. 사용자 지정 위치는 재실행 후 다시 선택하면 이전 이력이 나타납니다." TextWrapping="Wrap" Foreground="#52616A" Margin="0,0,0,8"/>
-    <StackPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,4,0,12"><TextBlock Text="검증 방식" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="Mode" SelectedIndex="0" Width="245"><ComboBoxItem Content="빠른 검증 (크기·수정시간)"/><ComboBoxItem Content="SHA-256 검증 (내용 전체 읽기)"/></ComboBox><CheckBox x:Name="ReplaceExisting" Content="불일치 기존 파일을 검증 후 교체" Margin="24,0,0,0" VerticalAlignment="Center"/></StackPanel>
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="80"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="목적지 폴더" VerticalAlignment="Center"/><TextBox Grid.Column="1" x:Name="DestinationPath" AutomationProperties.AutomationId="DestinationPath" AutomationProperties.Name="목적지 폴더 경로" Margin="0,0,8,8" TextChanged="DestinationChanged"/><Button Grid.Column="2" Content="찾기" Click="BrowseDestination" Margin="0,0,0,8"/>
+    <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,4,0,12"><TextBlock Text="검증 방식" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="Mode" SelectedIndex="0" Width="245"><ComboBoxItem Content="빠른 검증 (크기·수정시간)"/><ComboBoxItem Content="SHA-256 검증 (내용 전체 읽기)"/></ComboBox><CheckBox x:Name="ReplaceExisting" Content="불일치 기존 파일을 검증 후 교체" Margin="24,0,0,0" VerticalAlignment="Center"/></StackPanel>
    </Grid>
   </StackPanel>
   </ScrollViewer>

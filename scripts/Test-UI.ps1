@@ -1,5 +1,22 @@
 ﻿param([Parameter(Mandatory=$true)][string]$Executable)
 $ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or [Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+ throw 'This UI fixture may use the real default records folder only on an ephemeral GitHub-hosted Windows runner.'
+}
+$defaultParent = [IO.Path]::GetPathRoot([Environment]::SystemDirectory)
+$defaultRecordRoot = Join-Path $defaultParent 'SafeFileSync'
+function Assert-DefaultRecordsAbsent {
+ try { $null = [IO.File]::GetAttributes($defaultRecordRoot) }
+ catch {
+  if ($_.Exception.GetBaseException() -is [IO.FileNotFoundException]) { return }
+  throw
+ }
+ throw 'The default record path already exists. This fixture will not modify or delete it.'
+}
+# Prove absence before the fixture cleanup scope, including any existing file or reparse entry.
+Assert-DefaultRecordsAbsent
+if ([IO.Path]::GetPathRoot($env:RUNNER_TEMP) -eq $defaultParent) { throw 'The hosted fixture must use a different drive from the Windows system drive.' }
+$mayCreateDefaultRecords = $false
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
@@ -16,22 +33,32 @@ $fixture = Join-Path $env:RUNNER_TEMP ('SfsUI-' + [guid]::NewGuid().ToString('N'
 $src = Join-Path (Join-Path $fixture 'first') 'source'
 $srcB = Join-Path (Join-Path $fixture 'second') 'source'
 $dst = Join-Path $fixture 'destination'
-$insideRecords = Join-Path $srcB 'AppData/Local'
-$records = Join-Path $fixture 'records'
-$emptyRecords = Join-Path $fixture 'empty-records'
-New-Item -ItemType Directory -Path $src,$srcB,$dst,$insideRecords,$records,$emptyRecords | Out-Null
+New-Item -ItemType Directory -Path $src,$srcB,$dst | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'example.txt'),'UI transfer source A')
 [IO.File]::WriteAllText((Join-Path $srcB 'example.txt'),'UI transfer source B')
 New-Item -ItemType Directory -Path (Join-Path $src 'nested') | Out-Null
 [IO.File]::WriteAllText((Join-Path $src 'nested/child.txt'),'nested source')
-$defaultParent = [IO.Path]::GetPathRoot([Environment]::SystemDirectory)
-$defaultRecordRoot = Join-Path $defaultParent 'SafeFileSync'
-$defaultRecordsExisted = Test-Path $defaultRecordRoot
-$process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
-try {
+$sourceSnapshot = @{}
+foreach ($file in @(Get-ChildItem -LiteralPath @($src,$srcB) -File -Recurse)) {
+ $sourceSnapshot[$file.FullName] = @((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash,$file.LastWriteTimeUtc.Ticks,$file.CreationTimeUtc.Ticks,$file.Attributes.ToString()) -join ':'
+}
+function Assert-SourcesUnchanged {
+ $files = @(Get-ChildItem -LiteralPath @($src,$srcB) -File -Recurse)
+ if ($files.Count -ne $sourceSnapshot.Count) { throw 'The UI changed the number of source files.' }
+ foreach ($file in $files) {
+  $value = @((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash,$file.LastWriteTimeUtc.Ticks,$file.CreationTimeUtc.Ticks,$file.Attributes.ToString()) -join ':'
+  if (-not $sourceSnapshot.ContainsKey($file.FullName) -or $sourceSnapshot[$file.FullName] -cne $value) { throw 'The UI changed a source file or its metadata.' }
+ }
+}
+function Wait-AppWindow([Diagnostics.Process]$app) {
  $deadline = [DateTime]::UtcNow.AddSeconds(30)
- do { $process.Refresh(); if ($process.HasExited) { throw 'App exited during UI startup.' }; if ($process.MainWindowHandle -ne 0) { break }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $deadline)
- if ($process.MainWindowHandle -eq 0) { throw 'No app window.' }
+ do { $app.Refresh(); if ($app.HasExited) { throw 'App exited during UI startup.' }; if ($app.MainWindowHandle -ne 0) { return [System.Windows.Automation.AutomationElement]::FromHandle($app.MainWindowHandle) }; Start-Sleep -Milliseconds 200 } while ([DateTime]::UtcNow -lt $deadline)
+ throw 'No app window.'
+}
+$process = $null
+try {
+ $process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
+ $window = Wait-AppWindow $process
  $second = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
  try {
   $end = [DateTime]::UtcNow.AddSeconds(20)
@@ -42,7 +69,6 @@ try {
   $process.Refresh(); if ($process.HasExited) { throw 'First instance unexpectedly exited.' }
   Write-Output 'Per-session single-instance guard passed.'
  } finally { if (-not $second.HasExited) { & taskkill /PID $second.Id /T /F | Out-Null } }
- $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
  function Find-Element([string]$name,[bool]$id=$false) {
   $property = [System.Windows.Automation.AutomationElement]::NameProperty
   if ($id) { $property = [System.Windows.Automation.AutomationElement]::AutomationIdProperty }
@@ -67,6 +93,26 @@ try {
    Start-Sleep -Milliseconds 200
   } while ([DateTime]::UtcNow -lt $end)
   throw "UI did not reach '$expected': $status"
+ }
+ function Assert-RecordsUIHidden {
+  $forbiddenIds = @('StoragePath','StorageActualPath','ResetStorageLocation')
+  foreach ($element in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)) {
+   $name = $element.Current.Name
+   if ($forbiddenIds -contains $element.Current.AutomationId -or $name.Contains('기록 위치') -or $name.Contains('작업 기록 기준 폴더') -or $name.Contains('실제 기록 폴더') -or $name.Contains('사용자 지정 위치') -or $name -eq '기본 위치' -or $name.Contains($defaultRecordRoot)) {
+    throw 'The automation tree still exposes a record-location control, label, preview or internal record path.'
+   }
+  }
+ }
+ function Wait-Code([string]$expected) {
+  $started = [DateTime]::UtcNow
+  $end = $started.AddSeconds(40)
+  do {
+   $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'SupportCode')
+   $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+   if ($null -ne $element -and $element.Current.Name -ceq $expected -and (Find-Element '복사 시작').Current.IsEnabled -and [DateTime]::UtcNow -gt $started.AddMilliseconds(500)) { return }
+   Start-Sleep -Milliseconds 100
+  } while ([DateTime]::UtcNow -lt $end)
+  throw "The app did not reach the expected support code $expected."
  }
  function Assert-Code([string]$expected) {
   if ((Find-Element 'SupportCode' $true).Current.Name -cne $expected) { throw "Unexpected support code; expected $expected." }
@@ -105,33 +151,15 @@ try {
   if (-not $completed) { throw 'The app did not report completion of its code-only clipboard write.' }
   $copied = Invoke-ClipboardAccess { Get-Clipboard -Raw }
   if ($copied -cne $expected -or $copied -cnotmatch '^S(?:0[1-9]|1[0-6]|99)$') { throw 'Clipboard did not contain exactly the expected fixed support code.' }
-  foreach ($privateValue in @($src,$srcB,$dst,$records,'example.txt','UI transfer source')) {
+  foreach ($privateValue in @($src,$srcB,$dst,$defaultRecordRoot,'example.txt','UI transfer source')) {
    if ($copied.Contains($privateValue)) { throw 'Clipboard included fixture data instead of a code only.' }
   }
  }
- if ((Read-Value 'StoragePath') -ne $defaultParent) { throw 'Startup records parent is not the Windows system-drive root.' }
- $expectedDefaultPreview = '실제 기록 폴더: ' + $defaultRecordRoot + ' · 겹침 검사 후 생성'
- if ((Find-Element 'StorageActualPath' $true).Current.Name -ne $expectedDefaultPreview) { throw 'Startup actual records folder preview is incorrect.' }
- if (-not $defaultRecordsExisted -and (Test-Path $defaultRecordRoot)) { throw 'Startup or initial history loading unexpectedly created the default records folder.' }
- Set-Value 'StoragePath' '' $true
- if ((Find-Element 'StorageActualPath' $true).Current.Name -ne '실제 기록 폴더: 기준 폴더를 입력하세요.') { throw 'Empty records input was not handled safely.' }
- Set-Value 'StoragePath' 'C:' $true
- if ((Find-Element 'StorageActualPath' $true).Current.Name -ne '실제 기록 폴더: 유효한 기준 폴더를 입력하세요.') { throw 'Partial records path was not handled safely.' }
- Set-Value 'StoragePath' $records $true
- if (-not (Find-Element 'StorageActualPath' $true).Current.Name.Contains((Join-Path $records 'SafeFileSync'))) { throw 'Custom records folder preview did not follow typing.' }
- (Find-Element 'StoragePath' $true).SetFocus()
- (Find-Element 'SourcePath_1' $true).SetFocus()
- Invoke-Button 'ResetStorageLocation' $true
- $end = [DateTime]::UtcNow.AddSeconds(5)
- do {
-  if ((Read-Value 'StoragePath') -eq $defaultParent -and (Find-Element 'StorageActualPath' $true).Current.Name -eq $expectedDefaultPreview) { break }
-  Start-Sleep -Milliseconds 100
- } while ([DateTime]::UtcNow -lt $end)
- if ((Read-Value 'StoragePath') -ne $defaultParent -or (Find-Element 'StorageActualPath' $true).Current.Name -ne $expectedDefaultPreview) { throw 'Default records reset did not restore the parent and actual folder preview.' }
- if (-not $defaultRecordsExisted -and (Test-Path $defaultRecordRoot)) { throw 'Records selection/reset/history loading unexpectedly created the default records folder.' }
- Write-Output 'Default system-drive record location, actual-folder preview, reset and noncreating history checks passed.'
+ Assert-RecordsUIHidden
+ Assert-DefaultRecordsAbsent
+ Write-Output 'Record-location controls are absent and startup/history loading did not create the default records folder.'
  Invoke-Button 'RemoveSource_1' $true
- Invoke-Button '복사 시작'; Wait-Status '원본 폴더를 1개 이상'
+ Invoke-Button '복사 시작'; Wait-Code 'S01'
  Assert-Code 'S01'
  Invoke-Button 'AddSource' $true
  Set-Value 'SourcePath_1' $src $true
@@ -141,22 +169,27 @@ try {
  Set-Value 'SourceName_1' 'A' $true
  Set-Value 'SourceName_2' 'B' $true
  Set-Value '목적지 폴더 경로' $dst
- Set-Value '작업 기록 기준 폴더' $insideRecords
  foreach ($pair in @(@('SourceMapping_1',(Join-Path $dst 'A')),@('SourceMapping_2',(Join-Path $dst 'B')))) {
   if (-not (Find-Element $pair[0] $true).Current.Name.Contains($pair[1])) { throw 'Destination mapping preview does not match configured folder name.' }
  }
- Invoke-Button '복사 시작'; Wait-Status '기록 위치를'
+ # The other-drive first source remains valid; a system-drive-root second source must fail before scanning or creating records.
+ Set-Value 'SourcePath_2' $defaultParent $true
+ Set-Value 'SourceName_2' 'B' $true
+ Invoke-Button '복사 시작'; Wait-Code 'S03'
  Assert-Code 'S03'; Assert-CodeClipboard 'S03'
+ Assert-RecordsUIHidden
+ Assert-DefaultRecordsAbsent
+ Assert-SourcesUnchanged
  # A second rejected start must replace, rather than retain, the previous diagnostic.
  Set-Value 'SourceName_1' '' $true
- Invoke-Button '복사 시작'; Wait-Status '모든 원본 경로'
+ Invoke-Button '복사 시작'; Wait-Code 'S01'
  Assert-Code 'S01'
  Set-Value 'SourceName_1' 'A' $true
- if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Unsafe records were created within second source.' }
- if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Rejected job unexpectedly created a destination folder.' }
- $storageElement = Find-Element '작업 기록 기준 폴더'
- $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($records)
- Assert-NoCode
+ Assert-DefaultRecordsAbsent
+ if (@(Get-ChildItem -LiteralPath $dst -Force).Count -ne 0) { throw 'Rejected job unexpectedly wrote to the destination.' }
+ Set-Value 'SourcePath_2' $srcB $true
+ Set-Value 'SourceName_2' 'B' $true
+ $mayCreateDefaultRecords = $true
  Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
  Assert-NoCode
  if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Compare unexpectedly created a destination folder.' }
@@ -169,27 +202,31 @@ try {
  if ((Find-Element 'SourceCount' $true).Current.Name -ne '원본 폴더 2개') { throw 'Source count is incorrect.' }
  $summary = (Find-Element 'JobSummary' $true).Current.Name
  if (-not $summary.Contains('전체 검증 미실시')) { throw "Quick verification mislabeled: $summary" }
- $recordRoot = Join-Path $records 'SafeFileSync'
- if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Comparison and copy jobs are not in selected records.' }
- if (@(Get-ChildItem $recordRoot -Filter '*.html').Count -ne 1) { throw 'Report is not in selected records.' }
- foreach ($choice in @($emptyRecords,$records)) {
-  $storageElement.SetFocus()
-  $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($choice)
-  (Find-Element 'SourcePath_1' $true).SetFocus()
-  Start-Sleep -Milliseconds 200
-  $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
-  if ($choice -eq $emptyRecords -and $selection.Length -ne 0) { throw 'Old history survived records change.' }
-  if ($choice -eq $records -and $selection.Length -ne 1) { throw 'History was not restored from selected records.' }
- }
+ $recordRoot = $defaultRecordRoot
+ if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Comparison and copy did not create exactly two jobs in the automatic default records.' }
+ if (@(Get-ChildItem $recordRoot -Filter '*.html').Count -ne 1) { throw 'Copy did not create exactly one report in the automatic default records.' }
+ Assert-SourcesUnchanged
+ Assert-RecordsUIHidden
+ # Close the first instance and load its default history automatically in a fresh process.
+ $null = $process.CloseMainWindow()
+ if (-not $process.WaitForExit(10000)) { throw 'The app did not close before history restart.' }
+ $process.Dispose(); $process = $null
+ $process = Start-Process -FilePath (Resolve-Path $Executable) -PassThru
+ $window = Wait-AppWindow $process
+ Assert-RecordsUIHidden
+ Assert-NoCode
+ $selection = (Find-Element 'JobHistory' $true).GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+ if ($selection.Length -ne 1) { throw 'A fresh app did not automatically load and select its default job history.' }
+ Set-Value 'SourcePath_1' $srcB $true
  Set-Value 'SourceName_1' 'Changed-A' $true
- Invoke-Button 'RemoveSource_2' $true
  Invoke-Button '선택 작업 재개 / 재검사·재시도'; Wait-Status '작업: 완료'
  Assert-NoCode
  if ((Read-Value 'SourcePath_1') -ne $src -or (Read-Value 'SourcePath_2') -ne $srcB -or (Read-Value 'SourceName_1') -ne 'A' -or (Read-Value 'SourceName_2') -ne 'B') { throw 'Resume did not restore every persisted source path and folder name.' }
  if (Test-Path (Join-Path $dst 'Changed-A')) { throw 'Resume used an edited folder name instead of the saved mapping.' }
  if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Resume created a different job.' }
- if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Records were written within a source.' }
- Write-Output "WPF multiple sources, aliases, separate same-named files, storage rejection, history restoration and resume passed. $summary"
+ Assert-SourcesUnchanged
+ Assert-RecordsUIHidden
+ Write-Output "WPF multiple sources, aliases, separate same-named files, automatic records, safe overlap rejection, restarted history restoration and resume passed. $summary"
  Start-Sleep -Milliseconds 300
  function Capture-Window([string]$name) {
  $rect = New-Object SfsWindowCapture+RECT
@@ -239,10 +276,17 @@ try {
  [IO.File]::SetLastWriteTimeUtc($conflictFile,[IO.File]::GetLastWriteTimeUtc((Join-Path $src 'example.txt')))
  Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
  Assert-NoCode
+ Assert-SourcesUnchanged
+ Assert-RecordsUIHidden
  Write-Output 'Support codes S01, S03 and S13, code-only clipboard, diagnostic reset and error-panel layout passed.'
  $null = $process.CloseMainWindow()
  if (-not $process.WaitForExit(10000)) { throw 'UI close failed.' }
 } finally {
- if (-not $process.HasExited) { & taskkill /PID $process.Id /T /F | Out-Null }
- Remove-Item $fixture -Recurse -Force
+ if ($null -ne $process -and -not $process.HasExited) {
+  & taskkill /PID $process.Id /T /F | Out-Null
+  if (-not $process.WaitForExit(10000)) { throw 'The app is still running; owned fixtures were retained instead of cleaning active records.' }
+ }
+ # This hosted fixture proved the default path absent before any app launch; remove only its own newly created records after the app exits.
+ if ($mayCreateDefaultRecords -and (Test-Path -LiteralPath $defaultRecordRoot)) { Remove-Item -LiteralPath $defaultRecordRoot -Recurse -Force }
+ if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }

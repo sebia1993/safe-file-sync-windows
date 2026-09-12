@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
@@ -10,7 +9,7 @@ using SafeFileSync.Infrastructure.Windows;
 namespace SafeFileSync.App;
 public partial class MainWindow : Window
 {
-    private TransferCoordinator coordinator = new();
+    private readonly TransferCoordinator coordinator = new();
     private CancellationTokenSource? cancellation;
     private string? report;
     private DiagnosticCode? supportCode;
@@ -20,7 +19,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent(); SourceItems.ItemsSource = sourceRows; AppendSource(new SourceRow());
-        StoragePath.Text = RecordStorageLocation.DefaultParent; RefreshHistory(); Closing += OnClosing;
+        RefreshHistory(); Closing += OnClosing;
     }
     private void AddSource(object sender, RoutedEventArgs e) { SetPlacement(false); AppendSource(new SourceRow()); }
     private void RemoveSource(object sender, RoutedEventArgs e)
@@ -53,24 +52,6 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) == true) row.Path = dialog.FolderName;
     }
     private void BrowseDestination(object sender, RoutedEventArgs e) => Browse(DestinationPath);
-    private void BrowseStorage(object sender, RoutedEventArgs e) { Browse(StoragePath); RefreshHistory(); }
-    private void ResetStorageLocation(object sender, RoutedEventArgs e) { StoragePath.Text = RecordStorageLocation.DefaultParent; UpdateStoragePreview(); RefreshHistory(); }
-    private void UpdateStoragePreview()
-    {
-        if (string.IsNullOrWhiteSpace(StoragePath.Text)) { StorageActualPath.Text = "실제 기록 폴더: 기준 폴더를 입력하세요."; return; }
-        try { StorageActualPath.Text = $"실제 기록 폴더: {RecordStorageLocation.RootFor(StoragePath.Text)} · 겹침 검사 후 생성"; }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        { StorageActualPath.Text = "실제 기록 폴더: 유효한 기준 폴더를 입력하세요."; }
-    }
-    private void StorageChanged(object sender, TextChangedEventArgs e)
-    {
-        if (History is null) return;
-        UpdateStoragePreview();
-        SetSupportCode(null);
-        coordinator = new TransferCoordinator(StoragePath.Text);
-        History.ItemsSource = null; report = null; ReportButton.IsEnabled = false;
-    }
-    private void StorageFocusLost(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e) => RefreshHistory();
     private void Browse(TextBox box) { var dialog = new OpenFolderDialog { Title = "기존 폴더 선택" }; if (dialog.ShowDialog(this) == true) box.Text = dialog.FolderName; }
     private async void Compare(object sender, RoutedEventArgs e) => await Run(false);
     private async void Copy(object sender, RoutedEventArgs e) => await Run(true);
@@ -135,7 +116,7 @@ public partial class MainWindow : Window
             FillTree(SourceTree, result.Rows.Select(r => r.Source)); FillTree(DestinationTree, result.Rows.Select(r => r.Destination));
             report = result.ReportPath; ReportButton.IsEnabled = report is not null;
         } catch (OperationCanceledException) { SetSupportCode(DiagnosticCode.Cancelled); Status.Text = "중지됨 · 임시 복사본과 작업 기록 보존. 이력에서 재개할 수 있습니다."; Summary.Text = "전송·검증 미완료"; }
-        catch (Exception ex) { SetSupportCode(DiagnosticCodes.FromException(ex)); Status.Text = "작업을 완료하지 못했습니다: " + ex.Message; Summary.Text = "전송·검증 미완료 · 원본 삭제/변경 작업은 수행하지 않습니다."; }
+        catch (Exception ex) { ShowOperationError("작업을 완료하지 못했습니다", ex); Summary.Text = "전송·검증 미완료 · 원본 삭제/변경 작업은 수행하지 않습니다."; }
         finally {
             cancellation.Dispose(); cancellation = null; Progress.IsIndeterminate = false; elapsed.Stop(); SetBusy(false); RefreshHistory(preserveDiagnostic: true);
             if (closeWhenStopped) Close();
@@ -152,14 +133,20 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             if (preserveDiagnostic && supportCode.HasValue) { Status.Text += " · 작업 이력 갱신 실패"; return; }
-            SetSupportCode(DiagnosticCodes.FromException(ex)); Status.Text = "작업 이력 읽기 실패: " + ex.Message;
+            ShowOperationError("작업 이력 읽기 실패", ex);
         }
     }
     private void OpenReport(object sender, RoutedEventArgs e)
     {
         if (report is null) return;
         try { Process.Start(new ProcessStartInfo(report) { UseShellExecute = true }); }
-        catch (Exception ex) { SetSupportCode(DiagnosticCodes.FromException(ex)); Status.Text = "결과 보고서 열기 실패: " + ex.Message; }
+        catch (Exception ex) { ShowOperationError("결과 보고서 열기 실패", ex); }
+    }
+    private void ShowOperationError(string operation, Exception exception)
+    {
+        var code = DiagnosticCodes.FromException(exception);
+        SetSupportCode(code);
+        Status.Text = $"{operation}: {DiagnosticCodes.Description(code)}";
     }
     private void SetSupportCode(DiagnosticCode? code)
     {
