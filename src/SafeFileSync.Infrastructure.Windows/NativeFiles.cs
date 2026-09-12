@@ -1,3 +1,4 @@
+using SafeFileSync.Core;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -32,14 +33,14 @@ internal static class NativeFiles
         try {
             var info = Info(handle);
             if ((info.Attributes & 0x400) != 0 || (info.Attributes & 0x10) == 0)
-                throw new IOException("링크 또는 폴더가 아닌 경로는 허용하지 않습니다: " + path);
+                throw DiagnosticCodes.Tag(new IOException("링크 또는 폴더가 아닌 경로는 허용하지 않습니다: " + path), DiagnosticCode.UnsafeLink);
             return handle;
         } catch { handle.Dispose(); throw; }
     }
     internal static Information Info(SafeFileHandle handle)
     {
         if (!GetFileInformationByHandle(handle, out var info)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (info.IndexHigh == 0 && info.IndexLow == 0) throw new IOException("파일 시스템에서 안정적인 파일 식별자를 제공하지 않습니다.");
+        if (info.IndexHigh == 0 && info.IndexLow == 0) throw DiagnosticCodes.Tag(new IOException("파일 시스템에서 안정적인 파일 식별자를 제공하지 않습니다."), DiagnosticCode.UnsafeLink);
         return info;
     }
     internal static string FinalPath(SafeFileHandle handle)
@@ -65,7 +66,7 @@ internal static class NativeFiles
         if (handle.IsInvalid) { var code = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); }
         var stream = new FileStream(handle, FileAccess.Read, 64 * 1024);
         try {
-            if ((Info(stream.SafeFileHandle).Attributes & 0x400) != 0) throw new IOException("파일 링크 제외: " + path);
+            if ((Info(stream.SafeFileHandle).Attributes & 0x400) != 0) throw DiagnosticCodes.Tag(new IOException("파일 링크 제외: " + path), DiagnosticCode.UnsafeLink);
             return stream;
         } catch { stream.Dispose(); throw; }
     }

@@ -44,7 +44,7 @@ public sealed class JobStore : IDisposable
                 check.Transaction = tx; check.CommandText = "SELECT json FROM entries WHERE snapshot=$s AND k=$k";
                 check.Parameters.AddWithValue("$s", name); check.Parameters.AddWithValue("$k", key.Value);
                 if (check.ExecuteScalar() is string old && JsonSerializer.Deserialize<ScanEntry>(old)!.RelativePath != entry.RelativePath)
-                    throw new IOException("대소문자로만 구분되는 항목은 지원하지 않습니다: " + entry.RelativePath);
+                    throw DiagnosticCodes.Tag(new IOException("대소문자로만 구분되는 항목은 지원하지 않습니다: " + entry.RelativePath), DiagnosticCode.InvalidInput);
             }
             insert.ExecuteNonQuery(); count++; bytes += entry.Length;
             if (count % 128 == 0) progress?.Invoke(count, bytes);
@@ -109,7 +109,7 @@ public sealed class JobStore : IDisposable
         using var cmd = connection.CreateCommand(); cmd.CommandText = "SELECT k,status,detail FROM outcomes ORDER BY k";
         using var reader = cmd.ExecuteReader(); while (reader.Read()) yield return (reader.GetString(0),reader.GetString(1),reader.GetString(2));
     }
-    private void RequireComplete(string name) { if (Get("complete:" + name) != "1") throw new InvalidOperationException("완료되지 않은 스캔입니다: " + name); }
+    private void RequireComplete(string name) { if (Get("complete:" + name) != "1") throw DiagnosticCodes.Tag(new InvalidOperationException("완료되지 않은 스캔입니다: " + name), DiagnosticCode.JobRecord); }
     private void Execute(string sql) { using var cmd = connection.CreateCommand(); cmd.CommandText = sql; cmd.ExecuteNonQuery(); }
     public void Dispose() { try { FlushOutcomes(); } finally { connection.Dispose(); } }
 }

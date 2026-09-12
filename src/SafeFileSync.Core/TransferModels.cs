@@ -4,7 +4,8 @@ public enum VerificationMode { Quick, Sha256 }
 public enum DifferenceKind { QuickMatch, Verified, Missing, Extra, Different, TypeConflict, Unverified }
 public enum ConflictPolicy { Preserve, ReplaceAfterVerification }
 public sealed record ScanEntry(string RelativePath, EntryKind Kind, long Length = 0,
-    long LastWriteUtcTicks = 0, string? Hash = null, string? Detail = null, string? Identity = null, uint Links = 1);
+    long LastWriteUtcTicks = 0, string? Hash = null, string? Detail = null, string? Identity = null, uint Links = 1,
+    DiagnosticCode? ErrorCode = null);
 public sealed record Difference(string RelativePath, DifferenceKind Kind, ScanEntry? Source, ScanEntry? Destination);
 public sealed record TransferProgress(string Phase, string RelativePath, long CompletedFiles = 0,
     long TotalFiles = 0, long CompletedBytes = 0, long TotalBytes = 0, string? Detail = null);

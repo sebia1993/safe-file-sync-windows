@@ -36,7 +36,7 @@ public static class PathSafetyService
     public static void ValidatePair(string source, string destination)
     {
         if (IsWithin(destination, source) || IsWithin(source, destination))
-            throw new ArgumentException("원본과 목적지는 같거나 서로 포함될 수 없습니다.");
+            throw DiagnosticCodes.Tag(new ArgumentException("원본과 목적지는 같거나 서로 포함될 수 없습니다."), DiagnosticCode.PathOverlap);
     }
 }
 

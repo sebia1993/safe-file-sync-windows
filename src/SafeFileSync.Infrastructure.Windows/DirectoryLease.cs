@@ -46,7 +46,7 @@ public sealed class RootSafetyLease : IDisposable
             try {
                 PathSafetyService.ValidatePair(src.FinalPath, dst.FinalPath);
                 if (dst.Identities.Contains(src.Identities[^1]) || src.Identities.Contains(dst.Identities[^1]))
-                    throw new IOException("원본과 목적지가 물리적으로 겹칩니다.");
+                    throw DiagnosticCodes.Tag(new IOException("원본과 목적지가 물리적으로 겹칩니다."), DiagnosticCode.PathOverlap);
                 return new(src.FinalPath, dst.FinalPath, src, dst);
             } catch { dst.Dispose(); throw; }
         } catch { src.Dispose(); throw; }

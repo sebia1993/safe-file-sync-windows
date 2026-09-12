@@ -65,8 +65,34 @@ try {
   } while ([DateTime]::UtcNow -lt $end)
   throw "UI did not reach '$expected': $status"
  }
+ function Assert-Code([string]$expected) {
+  if ((Find-Element 'SupportCode' $true).Current.Name -cne $expected) { throw "Unexpected support code; expected $expected." }
+  if (-not (Find-Element 'CopySupportCode' $true).Current.IsEnabled) { throw 'Code-only copy action is not enabled for an error.' }
+ }
+ function Assert-NoCode {
+  $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'SupportCode')
+  $codeElement = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+  if ($null -ne $codeElement -and $codeElement.Current.Name.Length -ne 0) { throw 'A stale support code remains after reset or successful work.' }
+  $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'CopySupportCode')
+  $copyElement = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+  if ($null -ne $copyElement -and $copyElement.Current.IsEnabled) { throw 'Code copy remained enabled without an active code.' }
+ }
+ function Assert-CodeClipboard([string]$expected) {
+  Set-Clipboard -Value 'Sfs UI clipboard sentinel'
+  Invoke-Button 'CopySupportCode' $true
+  $end = [DateTime]::UtcNow.AddSeconds(5)
+  do {
+   $copied = Get-Clipboard -Raw
+   if ($copied -ceq $expected) { break }; Start-Sleep -Milliseconds 100
+  } while ([DateTime]::UtcNow -lt $end)
+  if ($copied -cne $expected -or $copied -cnotmatch '^S(?:0[1-9]|1[0-6]|99)$') { throw 'Clipboard did not contain exactly the expected fixed support code.' }
+  foreach ($privateValue in @($src,$srcB,$dst,$records,'example.txt','UI transfer source')) {
+   if ($copied.Contains($privateValue)) { throw 'Clipboard included fixture data instead of a code only.' }
+  }
+ }
  Invoke-Button 'RemoveSource_1' $true
  Invoke-Button '복사 시작'; Wait-Status '원본 폴더를 1개 이상'
+ Assert-Code 'S01'
  Invoke-Button 'AddSource' $true
  Set-Value 'SourcePath_1' $src $true
  Invoke-Button 'AddSource' $true
@@ -80,13 +106,22 @@ try {
   if (-not (Find-Element $pair[0] $true).Current.Name.Contains($pair[1])) { throw 'Destination mapping preview does not match configured folder name.' }
  }
  Invoke-Button '복사 시작'; Wait-Status '기록 위치를'
+ Assert-Code 'S03'; Assert-CodeClipboard 'S03'
+ # A second rejected start must replace, rather than retain, the previous diagnostic.
+ Set-Value 'SourceName_1' '' $true
+ Invoke-Button '복사 시작'; Wait-Status '모든 원본 경로'
+ Assert-Code 'S01'
+ Set-Value 'SourceName_1' 'A' $true
  if (Test-Path (Join-Path $insideRecords 'SafeFileSync')) { throw 'Unsafe records were created within second source.' }
  if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Rejected job unexpectedly created a destination folder.' }
  $storageElement = Find-Element '작업 기록 기준 폴더'
  $storageElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($records)
+ Assert-NoCode
  Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
+ Assert-NoCode
  if ((Test-Path (Join-Path $dst 'A')) -or (Test-Path (Join-Path $dst 'B'))) { throw 'Compare unexpectedly created a destination folder.' }
  Invoke-Button '복사 시작'; Wait-Status '작업: 완료'
+ Assert-NoCode
  if ([IO.File]::ReadAllText((Join-Path $dst 'A/example.txt')) -ne 'UI transfer source A') { throw 'First source did not copy to its own destination folder.' }
  if ([IO.File]::ReadAllText((Join-Path $dst 'B/example.txt')) -ne 'UI transfer source B') { throw 'Second source did not copy to its own destination folder.' }
  if (Test-Path (Join-Path $dst 'example.txt')) { throw 'Multi-source copy unexpectedly used legacy direct placement.' }
@@ -109,6 +144,7 @@ try {
  Set-Value 'SourceName_1' 'Changed-A' $true
  Invoke-Button 'RemoveSource_2' $true
  Invoke-Button '선택 작업 재개 / 재검사·재시도'; Wait-Status '작업: 완료'
+ Assert-NoCode
  if ((Read-Value 'SourcePath_1') -ne $src -or (Read-Value 'SourcePath_2') -ne $srcB -or (Read-Value 'SourceName_1') -ne 'A' -or (Read-Value 'SourceName_2') -ne 'B') { throw 'Resume did not restore every persisted source path and folder name.' }
  if (Test-Path (Join-Path $dst 'Changed-A')) { throw 'Resume used an edited folder name instead of the saved mapping.' }
  if (@(Get-ChildItem $recordRoot -Filter '*.sqlite').Count -ne 2) { throw 'Resume created a different job.' }
@@ -150,6 +186,20 @@ try {
  Start-Sleep -Milliseconds 300
  Capture-Window 'wpf-folders.png'
  Write-Output 'Both source and destination folder trees passed UI inspection.'
+ # Preserve policy should report a short conflict code without overwriting the destination.
+ $conflictFile = Join-Path $dst 'A/example.txt'
+ [IO.File]::WriteAllText($conflictFile,'destination conflict fixture with different length')
+ Invoke-Button '복사 시작'; Wait-Status '작업: 확인 필요'
+ Assert-Code 'S13'; Assert-CodeClipboard 'S13'
+ if ([IO.File]::ReadAllText($conflictFile) -ne 'destination conflict fixture with different length') { throw 'Preserve policy overwrote a conflicting destination.' }
+ (Find-Element '차이 및 검증 결과').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+ if ((Find-Element 'Differences' $true).Current.BoundingRectangle.Height -lt 120) { throw 'Support code panel left too little room for result inspection.' }
+ Capture-Window 'wpf-support-code.png'
+ [IO.File]::WriteAllText($conflictFile,[IO.File]::ReadAllText((Join-Path $src 'example.txt')))
+ [IO.File]::SetLastWriteTimeUtc($conflictFile,[IO.File]::GetLastWriteTimeUtc((Join-Path $src 'example.txt')))
+ Invoke-Button '폴더 비교'; Wait-Status '비교 완료'
+ Assert-NoCode
+ Write-Output 'Support codes S01, S03 and S13, code-only clipboard, diagnostic reset and error-panel layout passed.'
  $null = $process.CloseMainWindow()
  if (-not $process.WaitForExit(10000)) { throw 'UI close failed.' }
 } finally {

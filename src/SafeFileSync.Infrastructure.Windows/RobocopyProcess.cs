@@ -27,7 +27,7 @@ public sealed class RobocopyProcess
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = start };
         token.ThrowIfCancellationRequested();
-        if (!process.Start()) throw new IOException("Robocopy를 시작하지 못했습니다.");
+        if (!process.Start()) throw DiagnosticCodes.Tag(new IOException("Robocopy를 시작하지 못했습니다."), DiagnosticCode.CopyFailed);
         var output = new StringBuilder(); var gate = new object();
         async Task Drain(StreamReader reader)
         {
