@@ -34,7 +34,7 @@ public sealed class DiagnosticCodeTests
     {
         { 5, DiagnosticCode.AccessDenied }, { 1314, DiagnosticCode.AccessDenied }, { 1326, DiagnosticCode.AccessDenied },
         { 53, DiagnosticCode.Network }, { 54, DiagnosticCode.Network }, { 59, DiagnosticCode.Network },
-        { 64, DiagnosticCode.Network }, { 67, DiagnosticCode.Network }, { 121, DiagnosticCode.Network },
+        { 64, DiagnosticCode.Network }, { 67, DiagnosticCode.Network }, { 121, DiagnosticCode.Io },
         { 1201, DiagnosticCode.Network }, { 1222, DiagnosticCode.Network }, { 1231, DiagnosticCode.Network },
         { 1232, DiagnosticCode.Network }, { 1236, DiagnosticCode.Network }, { 2250, DiagnosticCode.Network },
         { 2, DiagnosticCode.PathUnavailable }, { 3, DiagnosticCode.PathUnavailable },

@@ -99,7 +99,9 @@ public static class DiagnosticCodes
     private static DiagnosticCode FromWindowsError(int code) => code switch {
         5 or 65 or 86 or 1314 or 1326 or 1385 or 1909 => DiagnosticCode.AccessDenied,
         2 or 3 or 15 or 21 => DiagnosticCode.PathUnavailable,
-        53 or 54 or 59 or 64 or 67 or 121 or 1201 or 1222 or 1231 or 1232 or 1236 or 2250 => DiagnosticCode.Network,
+        53 or 54 or 59 or 64 or 67 or 1201 or 1222 or 1231 or 1232 or 1236 or 2250 => DiagnosticCode.Network,
+        // ERROR_SEM_TIMEOUT does not establish a network cause (WinError.h / Microsoft system error codes).
+        121 => DiagnosticCode.Io,
         32 or 33 => DiagnosticCode.FileInUse,
         39 or 112 => DiagnosticCode.InsufficientSpace,
         80 or 183 => DiagnosticCode.DestinationConflict,
