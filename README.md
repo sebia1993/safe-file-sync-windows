@@ -1,8 +1,27 @@
 # SafeFileSync for Windows
 
+[![Windows safety checks](https://github.com/sebia1993/safe-file-sync-windows/actions/workflows/windows.yml/badge.svg?branch=main)](https://github.com/sebia1993/safe-file-sync-windows/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Windows 11에서 **원본을 읽기 전용으로 유지**하며 로컬 또는 SMB/UNC 폴더로 복사하고 결과를 검증하는 한국어 데스크톱 도구입니다. C# · .NET 10 · WPF · Robocopy · SQLite를 사용합니다.
 
-현재 버전은 **0.1.0-alpha.6**입니다. 자동 검증과 현장 검증 범위는 [검증 기록](docs/VALIDATION.md)을 확인하세요.
+현재 버전은 **0.1.0-alpha.6 사전 릴리스**입니다. [Windows x64 배포 ZIP·SHA256SUMS·빌드 정보](https://github.com/sebia1993/safe-file-sync-windows/releases/tag/v0.1.0-alpha.6)에서 받을 수 있습니다. 자동 검증과 현장 검증 범위는 [검증 기록](docs/VALIDATION.md)을 확인하세요.
+
+## 포트폴리오 요약
+
+| 관점 | 내용 |
+|---|---|
+| 해결한 문제 | 중요한 폴더를 복사할 때 원본 보존, 기존 목적지 충돌, 내용 일치와 중단 후 재개 결과를 각각 확인해야 하는 문제 |
+| 구현 범위 | 한국어 WPF UI, 경로·원본 보호, Robocopy 전송, SHA-256 검증, SQLite 작업 이력·재개, HTML 보고서와 Windows 패키징 |
+| 핵심 설계 판단 | 원본 쓰기를 차단하고 임시 복사본 검증 후 파일별로 반영하며, 전송 처리율·원본 검사·복제율·SHA-256 검증률을 구분 |
+| 검증 근거 | 경로·링크·잠금·손상·취소/재개 회귀 테스트, Windows 로컬/loopback SMB, 단일 EXE WPF 및 ZIP smoke 검증 |
+| 증거의 한계 | 합성 입력과 GitHub Windows 러너 기준이며 실제 회사 SMB·Windows 11 PC·EDR/DLP·물리 단절 검증과 구분 |
+
+### 검토 시 읽는 순서
+
+1. 아래 사용 순서와 설계 판단에서 **무엇을 보존하고 어떤 조건에서 복사를 완료로 보는지** 확인합니다.
+2. [설계 사례와 코드·회귀 테스트 연결](docs/PORTFOLIO_KO.md)에서 기존 파일 충돌, 내용 손상, 중단 중 원본 변경을 다루는 구현을 확인합니다.
+3. 같은 문서의 [합성 입력 재현](docs/PORTFOLIO_KO.md#장비-없이-재현하기)과 [검증 근거·한계](docs/PORTFOLIO_KO.md#검증-근거와-한계)를 대조합니다. 실제 업무 시간 절감이나 데이터 손실 방지 실적 수치는 주장하지 않습니다.
 
 ## 사용 순서
 
@@ -15,6 +34,30 @@ Windows 11에서 **원본을 읽기 전용으로 유지**하며 로컬 또는 SM
 7. 중지/실패 후에는 이력에서 작업을 선택하여 재개하거나 실패 항목만 재시도합니다. 재개할 때 양쪽 폴더를 다시 검사하므로 오래된 완료 상태를 신뢰하지 않습니다. 작업 정책과 최초 원본 manifest는 재개 시 유지됩니다. 중지 중 원본이 바뀌면 재개 후에도 변경 경고를 남깁니다. 변경된 원본을 새 기준으로 사용할 때는 새 복사 작업을 시작하세요.
 
 작업 기록은 프로그램이 자동으로 관리합니다. 별도의 기록 경로 입력이나 선택 없이 비교·복사하고, 앱을 다시 열어도 작업 이력에서 재개할 수 있습니다. 시스템 드라이브 전체 대신 전송할 폴더를 선택하세요.
+
+## 해결하려 한 문제와 설계 판단
+
+| 상황 | 설계 판단 | 확인할 근거 |
+|---|---|---|
+| 기록·목적지 경로가 원본과 겹침 | 실제 경로와 모든 원본의 겹침을 확인하고 기록·복사 전에 차단 | [원본 보호와 경로 경계](docs/PORTFOLIO_KO.md#원본-보호와-경로-경계) |
+| 같은 이름의 목적지 파일이 이미 존재 | 기본은 보존, 교체 선택 시에도 임시 복사본 크기·SHA-256 확인 후 파일별 반영 | [기존 파일과 내용 검증](docs/PORTFOLIO_KO.md#기존-파일과-내용-검증) |
+| 파일 크기·수정시간은 같지만 내용이 다름 | 빠른 비교와 SHA-256 검증을 구분하고 빠른 일치를 내용 검증으로 표시하지 않음 | [비교·전송 회귀 테스트](tests/SafeFileSync.Tests/TransferTests.cs) |
+| 중지 중 원본이 바뀌거나 작업이 중단됨 | 최초 manifest와 작업 정책을 유지하고 재스캔하여 원본 변경 경고를 보존 | [중단과 재개](docs/PORTFOLIO_KO.md#중단과-재개) |
+| 여러 원본에 같은 상대 파일명이 있음 | 원본별 목적지 하위 폴더와 저장된 매핑을 사용 | [다중 원본 회귀 테스트](tests/SafeFileSync.Tests/MultiSourceTests.cs) |
+| 지원 요청에 내부 경로·로그가 섞일 수 있음 | 코드 복사는 정해진 오류 종류만 출력, 상세 보고서와 분리 | [오류코드 경계 테스트](tests/SafeFileSync.Tests/DiagnosticCodeTests.cs) |
+
+## 동작 구조
+
+```mermaid
+flowchart LR
+    A["원본·목적지·기록 경로 검사"] --> B["스캔·비교 / SQLite manifest"]
+    B --> C["Robocopy로 목적지 임시 영역에 복사"]
+    C --> D["임시 복사본 크기·SHA-256 검증"]
+    D --> E["검증된 파일만 최종 반영"]
+    E --> F["원본·목적지 재검사 / HTML 보고서"]
+```
+
+`폴더 비교`는 스캔·비교까지 수행하며 목적지 하위 폴더나 복사본을 만들지 않습니다. 복사는 파일별로 반영하므로 폴더 전체의 원자적 트랜잭션이나 단일 시점의 볼륨 스냅샷을 보장하지 않습니다. 구성요소별 책임은 [프로그램 구조](docs/ARCHITECTURE.md)에 정리되어 있습니다.
 
 ## 짧은 오류코드
 
@@ -83,3 +126,19 @@ dotnet publish src/SafeFileSync.App -c Release -r win-x64 --self-contained true 
 SMB 테스트는 워크플로가 만드는 격리된 공유를 사용합니다. macOS 크로스 빌드는 Windows 실행 검증이 아니며 Windows CI 결과를 별도로 확인합니다.
 
 [개발 계획](CODEX_DEVELOPMENT_PLAN.md) · [현장 점검](docs/ACCEPTANCE.md) · [Microsoft Robocopy 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/robocopy)
+
+## 문서
+
+| 문서 | 용도 |
+|---|---|
+| [설계 사례·코드·테스트](docs/PORTFOLIO_KO.md) | 대표 실패 상황과 구현 근거, 합성 재현 방법 |
+| [프로그램 구조](docs/ARCHITECTURE.md) | UI·Core·Windows 전송 계층의 책임과 데이터 흐름 |
+| [안전 모델](docs/SAFETY_MODEL.md) | 원본·경로·임시 복사·최종 반영의 보장 범위 |
+| [검증 계획](docs/TEST_PLAN.md) / [검증 기록](docs/VALIDATION.md) | 자동 검증 항목과 기록된 실행 근거 |
+| [현장 점검](docs/ACCEPTANCE.md) | 실제 Windows 11·회사 SMB·보안 정책의 별도 확인 |
+| [오류코드 안내](docs/ERROR_CODES.md) | 짧은 코드의 의미와 다음 확인 |
+| [기여 안내](CONTRIBUTING.md) / [보안 제보](SECURITY.md) | 변경·회귀 검증 원칙과 민감정보 취급 |
+
+## 라이선스
+
+프로젝트 코드는 [MIT License](LICENSE)로 공개합니다.
