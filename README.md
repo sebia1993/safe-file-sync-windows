@@ -49,7 +49,7 @@ Windows 11에서 **원본을 읽기 전용으로 유지**하며 로컬 또는 SM
 ## 동작 구조
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["원본·목적지·기록 경로 검사"] --> B["스캔·비교 / SQLite manifest"]
     B --> C["Robocopy로 목적지 임시 영역에 복사"]
     C --> D["임시 복사본 크기·SHA-256 검증"]
