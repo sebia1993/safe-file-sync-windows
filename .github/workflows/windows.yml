@@ -27,7 +27,7 @@ jobs:
       - name: Standalone EXE compare and copy UI acceptance
         shell: powershell
         run: ./scripts/Test-UI.ps1 -Executable artifacts/standalone/SafeFileSync.App.exe
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: ui-evidence
@@ -35,13 +35,13 @@ jobs:
           retention-days: 1
       - name: Package verified build and smoke-test extracted ZIP
         run: ./scripts/Package.ps1
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: release-package
           path: artifacts/package/*
           retention-days: 1
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: test-results
@@ -81,7 +81,7 @@ jobs:
           if ($env:SFS_SMB_DRIVE) { Remove-SmbMapping -LocalPath $env:SFS_SMB_DRIVE.TrimEnd('\') -Force }
           if ($env:SFS_SMB_NAME) { Remove-SmbShare -Name $env:SFS_SMB_NAME -Force }
           if ($env:SFS_SMB_LOCAL -and (Test-Path $env:SFS_SMB_LOCAL)) { Remove-Item $env:SFS_SMB_LOCAL -Recurse -Force }
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: smb-test-results
